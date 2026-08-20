@@ -277,12 +277,13 @@ const CUTOFF = '2026-07-31';   // 官方 Offtake 資料截止日。補登只認�
    TNF 於 2026/04 由 285.7 調為 333.35（一刀切，與客戶及品名無關），補登一律適用新價。 */
 const UNIT = { 'Ultra MD': 169.5, 'X3': 460, 'Ultra UD': 281, 'HAUD': 428.5, 'HAMD': 333.38, 'C': 238.1, 'TN': 95.25, 'TNF': 333.35, 'DT': 58.62 };
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
-const SCHEMA = 2;
-const APP_VERSION = '1.15.1';
+const SCHEMA = 3;
+const APP_VERSION = '1.16.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
 const CHANGELOG = [
+  ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
   ['1.15.1', '2026-08-18', '修正：體系內部拆解的 2025 端誤用全年資料（應為 1–7 月同期），影響 7 個合併客戶群；pipeline 加入期間口徑不變式檢查'],
   ['1.15.0', '2026-08-15', '「🔥接單」移至最左並設為預設起始頁'],
   ['1.14.0', '2026-08-15', '接單補登改為一張訂單可一次輸入多個品項，顯示整張合計'],
@@ -353,7 +354,8 @@ function migrate(blob) {
     };
   }
   if (b.schema === 1) b = { ...b, schema: 2, entries: [] };
-  return { ...b, schema: SCHEMA, entries: b.entries || [] };
+  if (b.schema === 2) b = { ...b, schema: 3, entries: (b.entries || []).map((e) => ({ hour: null, ...e })) };
+  return { ...b, schema: SCHEMA, entries: (b.entries || []).map((e) => ({ hour: e.hour ?? null, ...e })) };
 }
 
 /* 補登是否已被新的官方資料涵蓋。涵蓋者歸檔：保留但不列入計算，避免重複計數。 */
@@ -502,6 +504,31 @@ function dualYoY(grp, entries) {
     official: { s25: base25, s26: base26, gr: base25 ? base26 / base25 - 1 : null, asOf: CUTOFF },
     live: { s25: live25, s26: base26 + addAmt, gr: live25 ? (base26 + addAmt) / live25 - 1 : null, asOf, addAmt, n: mine.length },
     same, cov, suppress,
+  };
+}
+
+/* ── 下單時間 ─────────────────────────────────────────────
+   來源只有補登，官方 Offtake 沒有時間欄位，無法回溯。
+   刻意不自動帶入當下時間——批次補登時會把「輸入時間」誤記成「下單時間」，
+   而且看起來完全合理、不會被發現。 */
+const HOURS_AM = [8, 9, 10, 11];
+const HOURS_PM = [12, 13, 14, 15, 16, 17, 18, 19, 20];
+const hourLabel = (h) => (h == null ? '—' : h < 12 ? `上午 ${h} 點` : h === 12 ? '中午 12 點' : `下午 ${h - 12} 點`);
+const MIN_HOUR_SAMPLES = 5;   // 樣本充足性原則：未滿門檻不給結論
+
+function hourHabit(grp, entries) {
+  const hs = (entries || []).filter((e) => e.grp === grp && e.hour != null).map((e) => e.hour);
+  if (hs.length < MIN_HOUR_SAMPLES) return { n: hs.length, ok: false };
+  const bins = {};
+  hs.forEach((h) => { bins[h] = (bins[h] || 0) + 1; });
+  const sorted = Object.entries(bins).map(([h, c]) => ({ h: +h, c })).sort((a, b) => b.c - a.c || a.h - b.h);
+  const top = sorted[0];
+  const am = hs.filter((h) => h < 12).length;
+  return {
+    n: hs.length, ok: true, bins: sorted, top,
+    ampm: am > hs.length / 2 ? '上午' : (am < hs.length / 2 ? '下午' : '各半'),
+    amRatio: am / hs.length,
+    remind: Math.max(8, top.h - 1),
   };
 }
 
@@ -952,6 +979,46 @@ function Card({ grp, onBack, onLog, entries }) {
             )}
           </div>
         )}
+
+        <div>
+          <SecHead n="D2" t="下單時間習慣" />
+          {(() => {
+            const hh = hourHabit(grp, entries);
+            if (!hh.ok) return (
+              <div style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '12px 14px', fontSize: 12.5, color: C.ink2, lineHeight: 1.8 }}>
+                已累積 <b style={{ color: C.ink }}>{hh.n}</b> 筆有時間的補登，滿 {MIN_HOUR_SAMPLES} 筆後才開始分析。
+                官方 Offtake 沒有時間欄位，這項只能從補登往前累積，無法回溯。
+              </div>
+            );
+            const max = Math.max(...hh.bins.map((b) => b.c));
+            return (
+              <div style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '12px 14px' }}>
+                <div style={{ fontSize: 13.5, color: C.ink, lineHeight: 1.8 }}>
+                  {hh.n} 筆樣本中，最常下單在 <b>{hourLabel(hh.top.h)}</b>（{hh.top.c} 次），
+                  整體偏<b>{hh.ampm}</b>（上午佔 {sf(hh.amRatio)}）。
+                </div>
+                <div className="flex items-end" style={{ gap: 4, marginTop: 10, height: 46 }}>
+                  {[...HOURS_AM, ...HOURS_PM].map((h) => {
+                    const c = (hh.bins.find((b) => b.h === h) || {}).c || 0;
+                    return (
+                      <div key={h} style={{ flex: 1, textAlign: 'center' }}>
+                        <div style={{ height: c ? Math.max(4, (c / max) * 34) : 1,
+                          background: c ? (h === hh.top.h ? C.teal : C.rule) : C.hair }} />
+                        <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.ink3, marginTop: 3 }}>{h > 12 ? h - 12 : h}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 12.5, color: C.teal, fontWeight: 600, marginTop: 9 }}>
+                  建議提醒時機：{hourLabel(hh.remind)} 前後
+                </div>
+                <div style={{ fontSize: 11.5, color: C.ink3, marginTop: 4, lineHeight: 1.6 }}>
+                  抓在習慣下單時間前一小時聯繫，對方正要處理採購，接受度最高。
+                </div>
+              </div>
+            );
+          })()}
+        </div>
 
         {p.intel.length > 0 && (
         <div>
@@ -1717,6 +1784,7 @@ function EntryScreen({ entries, onSave, grps }) {
   const [note, setNote] = useState('');
   const [msg, setMsg] = useState('');
   const [editId, setEditId] = useState(null);
+  const [hour, setHour] = useState(null);
 
   const live = liveEntries(entries).sort((a, b) => (a.date < b.date ? 1 : -1));
   const arch = (entries || []).filter(isArchived);
@@ -1731,7 +1799,7 @@ function EntryScreen({ entries, onSave, grps }) {
     setLines([...lines, { item: next, paid: '', gift: '' }]);
   };
   const delLine = (i) => setLines(lines.length > 1 ? lines.filter((_, j) => j !== i) : lines);
-  const reset = () => { setLines([{ item: 'Ultra MD', paid: '', gift: '' }]); setNote(''); setEditId(null); };
+  const reset = () => { setLines([{ item: 'Ultra MD', paid: '', gift: '' }]); setNote(''); setEditId(null); setHour(null); };
 
   const save = () => {
     if (!valid) { setMsg('至少要有一個品項填了數量'); return; }
@@ -1741,12 +1809,12 @@ function EntryScreen({ entries, onSave, grps }) {
     if (editId) {
       const l = keep[0];
       onSave((entries || []).map((e) => (e.id === editId
-        ? { ...e, grp, date, item: l.item, paidEA: Number(l.paid) || 0, giftEA: Number(l.gift) || 0, unit: UNIT[l.item], note, updatedAt: now }
+        ? { ...e, grp, date, hour, item: l.item, paidEA: Number(l.paid) || 0, giftEA: Number(l.gift) || 0, unit: UNIT[l.item], note, updatedAt: now }
         : e)));
       setMsg(`已更新：${grp} ${l.item}`);
     } else {
       const recs = keep.map((l, i) => ({
-        id: `e-${Date.now()}-${i}`, grp, date, item: l.item,
+        id: `e-${Date.now()}-${i}`, grp, date, hour, item: l.item,
         paidEA: Number(l.paid) || 0, giftEA: Number(l.gift) || 0, unit: UNIT[l.item],
         note, createdAt: now,
       }));
@@ -1759,7 +1827,7 @@ function EntryScreen({ entries, onSave, grps }) {
   const edit = (e) => {
     setEditId(e.id); setGrp(e.grp); setDate(e.date);
     setLines([{ item: e.item, paid: String(e.paidEA || ''), gift: String(e.giftEA || '') }]);
-    setNote(e.note || ''); setMsg('');
+    setNote(e.note || ''); setHour(e.hour ?? null); setMsg('');
     if (typeof window !== 'undefined' && window.scrollTo) window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const del = (id) => { onSave((entries || []).filter((e) => e.id !== id)); if (editId === id) reset(); };
@@ -1848,6 +1916,32 @@ function EntryScreen({ entries, onSave, grps }) {
         </div>
 
         <div>
+          <div className="flex items-baseline flex-wrap" style={{ gap: 8 }}>
+            <Eyebrow>下單時間（選填）</Eyebrow>
+            <span style={{ fontSize: 11, color: C.ink3 }}>對方下單的時間，不是你輸入的時間</span>
+            <button onClick={() => setHour(new Date().getHours())}
+              style={{ marginLeft: 'auto', fontFamily: SANS, fontSize: 12, color: C.teal, border: `1px solid ${C.rule}`, padding: '3px 10px', background: C.surf }}>現在</button>
+            {hour != null && <button onClick={() => setHour(null)} style={{ fontFamily: SANS, fontSize: 12, color: C.ink3 }}>清除</button>}
+          </div>
+          {[['上午', HOURS_AM], ['下午', HOURS_PM]].map(([lbl, hs]) => (
+            <div key={lbl} className="flex items-center flex-wrap" style={{ gap: 5, marginTop: 7 }}>
+              <span style={{ fontFamily: SANS, fontSize: 12, color: C.ink3, width: 30 }}>{lbl}</span>
+              {hs.map((h) => (
+                <button key={h} onClick={() => setHour(hour === h ? null : h)}
+                  style={{ fontFamily: MONO, fontSize: 13, padding: '6px 10px', minWidth: 38,
+                    border: `1px solid ${hour === h ? C.ink : C.rule}`,
+                    background: hour === h ? C.ink : C.surf, color: hour === h ? '#fff' : C.ink2 }}>
+                  {h > 12 ? h - 12 : h}
+                </button>
+              ))}
+            </div>
+          ))}
+          <div style={{ fontSize: 11.5, color: hour != null ? C.teal : C.ink3, marginTop: 7 }}>
+            {hour != null ? `已選：${hourLabel(hour)}` : '沒把握就留空——填錯比不填更糟，會污染之後的時間分析。'}
+          </div>
+        </div>
+
+        <div>
           <Eyebrow>備註（選填．整張訂單共用）</Eyebrow>
           <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="例：搭贈檔期、電話追單"
             style={{ ...inp, fontFamily: SANS, marginTop: 4 }} />
@@ -1875,6 +1969,7 @@ function EntryScreen({ entries, onSave, grps }) {
             {live.map((e) => (
               <div key={e.id} className="flex items-baseline flex-wrap px-3 py-3" style={{ borderBottom: `1px solid ${C.hair}`, gap: 8, background: editId === e.id ? C.tealBg : C.surf }}>
                 <Num size={11.5} color={C.ink3}>{e.date}</Num>
+                {e.hour != null && <span style={{ fontFamily: MONO, fontSize: 10, color: '#fff', background: C.ink3, padding: '2px 5px' }}>{hourLabel(e.hour)}</span>}
                 <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, color: C.ink }}>{e.grp}</span>
                 <span style={{ fontFamily: SANS, fontSize: 13, color: C.ink2 }}>{e.item}</span>
                 <Num size={12.5} color={C.green} weight={600}>{e.paidEA} EA</Num>
