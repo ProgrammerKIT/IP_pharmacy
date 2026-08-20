@@ -173,9 +173,11 @@ def build(df):
                              h2=bool(last > pd.Timestamp(f'{prev}-07-31'))))
         zero.sort(key=lambda x: -x['s25'])
 
-        inner = df[df.Grp == g].pivot_table(index='Cust', columns='Year', values='Sales', aggfunc='sum').fillna(0)
-        innr = [dict(name=k, s25=int(v.get(prev, 0)), s26=int(v.get(curr, 0)))
-                for k, v in inner.iterrows()] if len(inner) > 1 else []
+        # 體系內部拆解：兩年都必須取【同期間 1–CUTOFF 月】，
+        # 不可用全年——2025 已含 8–12 月，混用會讓分店看起來衰退（2026/08/18 修正）
+        names = sorted(set(ga.Cust) | set(gb.Cust))
+        innr = [dict(name=n, s25=int(ga[ga.Cust == n].Sales.sum()),
+                     s26=int(gb[gb.Cust == n].Sales.sum())) for n in names] if len(names) > 1 else []
 
         daily = gfull.groupby('D')['Sales'].sum().sort_index()
         mfull = gfull.groupby('Period')['Sales'].sum()
@@ -197,6 +199,21 @@ def build(df):
             m25full=[int(mfull.get(m, 0)) for m in range(1, 13)],
             i25full={k: int(v) for k, v in gfull.groupby('Item').Sales.sum().items() if v != 0},
         )
+
+    # ── 不變式檢查：任何期間口徑混用都會在這裡被擋下 ──
+    for g, d in out.items():
+        if abs(sum(x['s25'] for x in d['inner']) - d['s25']) > 1 and d['inner']:
+            raise SystemExit(f"❌ {g}：內部拆解 2025 加總 {sum(x['s25'] for x in d['inner']):,} ≠ 群組 s25 {d['s25']:,}（期間口徑不一致）")
+        if abs(sum(x['s26'] for x in d['inner']) - d['s26']) > 1 and d['inner']:
+            raise SystemExit(f"❌ {g}：內部拆解 2026 加總 ≠ 群組 s26")
+        if abs(sum(x['s25'] for x in d['items']) - d['s25']) > 1:
+            raise SystemExit(f"❌ {g}：品項 2025 加總 ≠ 群組 s25")
+        if abs(sum(x['s26'] for x in d['items']) - d['s26']) > 1:
+            raise SystemExit(f"❌ {g}：品項 2026 加總 ≠ 群組 s26")
+        if abs(sum(d['m25']) - d['s25']) > 1:
+            raise SystemExit(f"❌ {g}：月別 2025 加總 ≠ 群組 s25")
+        if abs(sum(v for dt, v in d['d25'] if dt <= f'{CUTOFF_PERIOD:02d}-31') - d['s25']) > 1:
+            raise SystemExit(f"❌ {g}：日累計至 {CUTOFF_PERIOD} 月底 ≠ 群組 s25")
 
     ch_daily = y_prev_full.groupby('D')['Sales'].sum().sort_index()
     out['__CH__'] = dict(
