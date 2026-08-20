@@ -278,11 +278,12 @@ const CUTOFF = '2026-07-31';   // 官方 Offtake 資料截止日。補登只認�
 const UNIT = { 'Ultra MD': 169.5, 'X3': 460, 'Ultra UD': 281, 'HAUD': 428.5, 'HAMD': 333.38, 'C': 238.1, 'TN': 95.25, 'TNF': 333.35, 'DT': 58.62 };
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 2;
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
 const CHANGELOG = [
+  ['1.15.1', '2026-08-18', '修正：體系內部拆解的 2025 端誤用全年資料（應為 1–7 月同期），影響 7 個合併客戶群；pipeline 加入期間口徑不變式檢查'],
   ['1.15.0', '2026-08-15', '「🔥接單」移至最左並設為預設起始頁'],
   ['1.14.0', '2026-08-15', '接單補登改為一張訂單可一次輸入多個品項，顯示整張合計'],
   ['1.13.0', '2026-08-15', '移除「紀錄」分頁（與拜訪前重複，Kit 裁定一律由客戶卡進入）；拜訪歷程與編輯移至複盤頁'],
@@ -895,7 +896,7 @@ function Card({ grp, onBack, onLog, entries }) {
           </div>
           {d.inner.length > 0 && (
             <div style={{ marginTop: 10, background: C.surf, border: `1px solid ${C.hair}`, padding: '10px 14px' }}>
-              <Eyebrow>體系內部拆解 · 防止合併數字掩蓋反向變化</Eyebrow>
+              <Eyebrow>體系內部拆解 · 1–7 月同期 · 防止合併數字掩蓋反向變化</Eyebrow>
               {d.inner.map((x) => (
                 <div key={x.name} className="flex justify-between items-center" style={{ marginTop: 7 }}>
                   <span style={{ fontSize: 12.5, color: C.ink }}>{x.name}</span>
@@ -1997,7 +1998,7 @@ export default function App() {
           <div className="flex items-baseline justify-between">
             <div>
               <div style={{ fontFamily: SANS, fontSize: 15, fontWeight: 900, letterSpacing: '0.02em' }}>獨立藥局 拜訪作戰台</div>
-              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8FA8B2', marginTop: 2, letterSpacing: '0.08em' }}>v{APP_VERSION} · SOP v2.8 · 分析 {DATASET} · schema v{SCHEMA}</div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8FA8B2', marginTop: 2, letterSpacing: '0.08em' }}>v{APP_VERSION} · SOP v3.6 · 分析 {DATASET} · schema v{SCHEMA}</div>
             </div>
           </div>
         </header>
