@@ -268,7 +268,8 @@ const ITEM_FULL = {
    - 使用者資料（拜訪紀錄）與分析數字（DATA 常數）永遠分開存
    ══════════════════════════════════════════════════════════ */
 const NS = 'dsipharm';
-const KEY = { data: NS + ':data', backups: NS + ':backups', draft: NS + ':draft', sid: NS + ':sid', imp: NS + ':lastimport' };
+const KEY = { data: NS + ':data', backups: NS + ':backups', draft: NS + ':draft', sid: NS + ':sid', imp: NS + ':lastimport', exp: NS + ':lastexport' };
+const BACKUP_DUE_DAYS = 14;   // 超過即提醒手動匯出（自動快照防不了 iOS 清除本機資料）
 const CUTOFF = '2026-07-31';   // 官方 Offtake 資料截止日。補登只認這天之後的訂單。
 /* 單價一律鎖定（Kit 2026/08/15 裁定），不可手動更改。
    採用值＝Offtake 報表之 InvoiceSales 單價，**未稅**。
@@ -278,11 +279,13 @@ const CUTOFF = '2026-07-31';   // 官方 Offtake 資料截止日。補登只認�
 const UNIT = { 'Ultra MD': 169.5, 'X3': 460, 'Ultra UD': 281, 'HAUD': 428.5, 'HAMD': 333.38, 'C': 238.1, 'TN': 95.25, 'TNF': 333.35, 'DT': 58.62 };
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
 const CHANGELOG = [
+  ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
+  ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
   ['1.15.1', '2026-08-18', '修正：體系內部拆解的 2025 端誤用全年資料（應為 1–7 月同期），影響 7 個合併客戶群；pipeline 加入期間口徑不變式檢查'],
   ['1.15.0', '2026-08-15', '「🔥接單」移至最左並設為預設起始頁'],
@@ -531,6 +534,30 @@ function hourHabit(grp, entries) {
     remind: Math.max(8, top.h - 1),
   };
 }
+
+/* 紀錄的版本時間：以最後修改為準，沒改過就用建立時間。
+   匯入時據此自動判斷新舊，不再要求使用者手動勾選覆蓋——
+   那是整個流程裡唯一「漏掉會白做且不會報錯」的環節。 */
+const recTime = (r) => r && (r.updatedAt || r.createdAt || '');
+
+function mergePlan(localArr, incomingArr) {
+  const byId = {}; (localArr || []).forEach((r) => { byId[r.id] = r; });
+  const add = [], update = [], keepLocal = [], same = [];
+  (incomingArr || []).forEach((r) => {
+    const cur = byId[r.id];
+    if (!cur) { add.push(r); return; }
+    const a = recTime(r), b = recTime(cur);
+    if (a > b) update.push(r);
+    else if (a < b) keepLocal.push({ incoming: r, local: cur });
+    else same.push(r);
+  });
+  return { add, update, keepLocal, same };
+}
+
+const applyPlan = (localArr, plan) => {
+  const upd = {}; plan.update.forEach((r) => { upd[r.id] = r; });
+  return [...(localArr || []).map((r) => upd[r.id] || r), ...plan.add];
+};
 
 /* ── 小元件 ───────────────────────────────────────────── */
 const Rule = ({ c = C.hair, my = 0 }) => <div style={{ height: 1, background: c, margin: `${my}px 0` }} />;
@@ -1557,12 +1584,12 @@ function Schedule({ entries }) {
 
 
 /* ── 畫面六：資料保存 ─────────────────────────────────── */
-function DataScreen({ log, onReplace, backups, onRestore, entries }) {
+function DataScreen({ log, onReplace, backups, onRestore, entries, onExported }) {
+  const lastExp = rawGet(KEY.exp);
   const [paste, setPaste] = useState('');
   const [preview, setPreview] = useState(null);
   const [msg, setMsg] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
-  const [overwrite, setOverwrite] = useState(false);
   const [lastImp, setLastImp] = useState(() => rawGet(KEY.imp));
 
   const pickFile = (ev) => {
@@ -1582,6 +1609,8 @@ function DataScreen({ log, onReplace, backups, onRestore, entries }) {
     a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     a.download = `獨立藥局拜訪紀錄_${new Date().toISOString().slice(0, 10)}.json`;
     a.click(); URL.revokeObjectURL(a.href);
+    try { rawSet(KEY.exp, new Date().toISOString()); } catch {}
+    onExported();
     setMsg('已下載備份檔');
   };
 
@@ -1589,14 +1618,12 @@ function DataScreen({ log, onReplace, backups, onRestore, entries }) {
     try {
       const inc = migrate(JSON.parse(paste));
       if (!inc || !Array.isArray(inc.visits)) throw new Error('找不到 visits 陣列');
-      const ids = new Set(log.map((v) => v.id));
-      const add = inc.visits.filter((v) => !ids.has(v.id));
-      const dupV = inc.visits.filter((v) => ids.has(v.id));
-      const eids = new Set((entries || []).map((e) => e.id));
-      const addE = (inc.entries || []).filter((e) => !eids.has(e.id));
-      const dupE = (inc.entries || []).filter((e) => eids.has(e.id));
-      setPreview({ add, addE, dupV, dupE, total: inc.visits.length, totalE: (inc.entries || []).length,
-        srcExportedAt: (inc.exportedAt || '').slice(0, 16).replace('T', ' '), srcVersion: inc.appVersion });
+      setPreview({
+        v: mergePlan(log, inc.visits),
+        e: mergePlan(entries, inc.entries),
+        srcExportedAt: (inc.exportedAt || '').slice(0, 16).replace('T', ' '),
+        srcVersion: inc.appVersion,
+      });
       setMsg('');
     } catch (e) { setPreview(null); setMsg(`這段內容讀不出來：${e.message}`); }
   };
@@ -1624,7 +1651,8 @@ function DataScreen({ log, onReplace, backups, onRestore, entries }) {
         {[['拜訪紀錄', `${log.length} 筆`], ['接單補登', `${(entries || []).length} 筆`], ['資料格式', `schema v${SCHEMA}`], ['分析資料期間', DATASET],
           ['程式版本', `v${APP_VERSION}`], ['建置時間', BUILD_AT], ['自動快照', `${backups.length} 份`],
           ['距上次快照', sinceBackup === null ? '—' : `${sinceBackup} 天`],
-          ['上次匯入', lastImp ? lastImp.at : '從未']].map(([k, v]) => (
+          ['上次匯入', lastImp ? lastImp.at : '從未'],
+          ['距上次備份', lastExp ? `${Math.floor((Date.now() - new Date(lastExp)) / 86400000)} 天` : '從未備份']].map(([k, v]) => (
           <div key={k}><Eyebrow>{k}</Eyebrow><div style={{ marginTop: 3 }}><Num size={14} weight={600}>{v}</Num></div></div>
         ))}
       </div>
@@ -1641,7 +1669,7 @@ function DataScreen({ log, onReplace, backups, onRestore, entries }) {
         <SecHead n="1" t="匯出備份" />
         <div className="flex flex-wrap" style={{ gap: 8 }}>
           <button onClick={download} style={{ background: C.ink, color: '#fff', fontFamily: SANS, fontSize: 14, fontWeight: 700, padding: '11px 20px' }}>下載 JSON 檔</button>
-          <button onClick={() => { navigator.clipboard?.writeText(json); setMsg('已複製到剪貼簿'); }}
+          <button onClick={() => { navigator.clipboard?.writeText(json); try { rawSet(KEY.exp, new Date().toISOString()); } catch {} onExported(); setMsg('已複製到剪貼簿'); }}
             style={{ background: C.surf, color: C.ink, border: `1px solid ${C.rule}`, fontFamily: SANS, fontSize: 14, fontWeight: 700, padding: '11px 20px' }}>複製 JSON</button>
         </div>
         {msg && <div style={{ fontSize: 12.5, color: C.teal, marginTop: 8 }}>{msg}</div>}
@@ -1663,51 +1691,59 @@ function DataScreen({ log, onReplace, backups, onRestore, entries }) {
           style={{ background: paste.trim() ? C.teal : C.ink3, color: '#fff', fontFamily: SANS, fontSize: 14, fontWeight: 700, padding: '10px 18px', marginTop: 8 }}>
           檢查內容
         </button>
-        {preview && (
-          <div style={{ background: C.tealBg, border: `1px solid #CDE2E8`, padding: '12px 14px', marginTop: 10 }}>
-            <div style={{ fontSize: 13.5, color: '#0A4A5A', lineHeight: 1.8 }}>
-              拜訪紀錄 {preview.total} 筆：新增 <b>{preview.add.length}</b> 筆、
-              ID 重複 <b>{preview.dupV.length}</b> 筆（{overwrite ? '將以匯入內容覆蓋' : '將略過'}）。
-              <br />接單補登 {preview.totalE} 筆：新增 <b>{preview.addE.length}</b> 筆、
-              ID 重複 <b>{preview.dupE.length}</b> 筆（{overwrite ? '將覆蓋' : '將略過'}）。
-            </div>
-            <label className="flex items-baseline" style={{ gap: 7, marginTop: 10, cursor: 'pointer' }}>
-              <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} style={{ width: 16, height: 16 }} />
-              <span style={{ fontSize: 12.5, color: '#0A4A5A', lineHeight: 1.6 }}>
-                以匯入的內容覆蓋 ID 相同的紀錄。<b>跨裝置搬資料時要勾</b>——兩台裝置的種子紀錄 ID 相同，不勾的話你改過的版本會被當成重複而略過。
-              </span>
-            </label>
-            {(preview.add.length > 0 || preview.addE.length > 0 || (overwrite && (preview.dupV.length > 0 || preview.dupE.length > 0))) && (
-              <button onClick={() => {
-                  const mergeV = overwrite
-                    ? [...log.map((v) => preview.dupV.find((x) => x.id === v.id) || v), ...preview.add]
-                    : [...log, ...preview.add];
-                  const mergeE = overwrite
-                    ? [...(entries || []).map((e) => preview.dupE.find((x) => x.id === e.id) || e), ...preview.addE]
-                    : [...(entries || []), ...preview.addE];
-                  onReplace(mergeV, mergeE); setPreview(null); setPaste('');
-                  const rec = { at: new Date().toISOString().slice(0, 16).replace('T', ' '), from: preview.srcExportedAt || '未標示', v: preview.srcVersion || '?' };
-                  try { rawSet(KEY.imp, rec); } catch {}
-                  setLastImp(rec);
-                  setMsg(`已合併：新增 ${preview.add.length + preview.addE.length} 筆${overwrite ? `、覆蓋 ${preview.dupV.length + preview.dupE.length} 筆` : ''}`);
-                }}
-                style={{ background: C.green, color: '#fff', fontFamily: SANS, fontSize: 14, fontWeight: 700, padding: '10px 18px', marginTop: 9 }}>
-                確認合併
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+        {preview && (() => {
+          const { v, e } = preview;
+          const diverge = [...v.keepLocal, ...e.keepLocal];
+          const nAdd = v.add.length + e.add.length;
+          const nUpd = v.update.length + e.update.length;
+          return (
+            <div style={{ background: C.tealBg, border: `1px solid #CDE2E8`, padding: '12px 14px', marginTop: 10 }}>
+              <div style={{ fontSize: 13.5, color: '#0A4A5A', lineHeight: 1.85 }}>
+                來源檔匯出於 <b>{preview.srcExportedAt || '未標示'}</b>（v{preview.srcVersion || '?'}）。
+                <br />拜訪紀錄：新增 <b>{v.add.length}</b>、更新 <b>{v.update.length}</b>、本機較新保留 <b>{v.keepLocal.length}</b>、相同 {v.same.length}。
+                <br />接單補登：新增 <b>{e.add.length}</b>、更新 <b>{e.update.length}</b>、本機較新保留 <b>{e.keepLocal.length}</b>、相同 {e.same.length}。
+              </div>
+              <div style={{ fontSize: 11.5, color: C.ink2, lineHeight: 1.7, marginTop: 7 }}>
+                依每筆紀錄的最後修改時間自動判斷新舊，不需要你手動選擇。
+              </div>
 
-      {lastImp && (
-        <div style={{ background: C.tealBg, border: '1px solid #CDE2E8', padding: '11px 14px' }}>
-          <Eyebrow color={C.teal}>單向同步狀態</Eyebrow>
-          <div style={{ fontSize: 12.5, color: '#0A4A5A', lineHeight: 1.8, marginTop: 5 }}>
-            這台裝置上次匯入是 <b>{lastImp.at}</b>，來源檔的匯出時間是 <b>{lastImp.from}</b>（v{lastImp.v}）。
-            這台看到的資料就停在那個時間點，之後手機上新增的東西不會自己過來。
-          </div>
-        </div>
-      )}
+              {diverge.length > 0 && (
+                <div style={{ background: C.redBg, border: `1px solid ${C.redRule}`, padding: '11px 13px', marginTop: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: C.red }}>兩邊都改過：{diverge.length} 筆</div>
+                  <div style={{ fontSize: 12.5, color: '#4A1E1A', lineHeight: 1.8, marginTop: 5 }}>
+                    以下紀錄本機的版本比來源檔新，合併後<b>會保留本機版本</b>，來源那邊的修改不會進來。
+                    若來源那邊的才是你要的，請先把本機資料匯到那台、在那邊合併完再匯回來。
+                  </div>
+                  {diverge.slice(0, 6).map((x, i) => (
+                    <div key={i} style={{ fontSize: 12, color: C.ink2, marginTop: 6, borderLeft: `2px solid ${C.redRule}`, paddingLeft: 8, lineHeight: 1.6 }}>
+                      {x.local.grp}{x.local.item ? ` ${x.local.item}` : ''}{x.local.date ? `｜${x.local.date}` : ''}
+                      <br /><span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+                        本機 {recTime(x.local).slice(0, 16).replace('T', ' ')} ／ 來源 {recTime(x.incoming).slice(0, 16).replace('T', ' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(nAdd + nUpd) > 0 ? (
+                <button onClick={() => {
+                    onReplace(applyPlan(log, v), applyPlan(entries, e));
+                    const rec = { at: new Date().toISOString().slice(0, 16).replace('T', ' '),
+                                  from: preview.srcExportedAt || '未標示', v: preview.srcVersion || '?' };
+                    try { rawSet(KEY.imp, rec); } catch {}
+                    setLastImp(rec); setPreview(null); setPaste('');
+                    setMsg(`已合併：新增 ${nAdd} 筆、更新 ${nUpd} 筆`);
+                  }}
+                  style={{ background: C.green, color: '#fff', fontFamily: SANS, fontSize: 14, fontWeight: 700, padding: '10px 18px', marginTop: 10 }}>
+                  確認合併
+                </button>
+              ) : (
+                <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 10 }}>沒有需要新增或更新的紀錄，兩邊已經一致。</div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
 
       <div>
         <SecHead n="3" t={`自動快照 ${backups.length} 份`} />
@@ -1746,8 +1782,18 @@ function DataScreen({ log, onReplace, backups, onRestore, entries }) {
           ))}
         </div>
         <div style={{ fontSize: 12, color: C.ink2, lineHeight: 1.8, marginTop: 9 }}>
-          上傳新版後若畫面沒變，多半是瀏覽器快取——強制重新整理（桌機 Cmd/Ctrl+Shift+R，手機關掉分頁再開），
-          回這裡看版號是不是最新的。
+          App 會在每次回到前景時自動檢查新版本，有更新會在頂端跳出橫幅。
+          若想立即確認，按下面的按鈕；真的卡住就把 App 從多工卡片滑掉再重開。
+        </div>
+        <button onClick={() => {
+            const u = window.location.pathname + '?v=' + Date.now();
+            window.location.replace(u);
+          }}
+          style={{ background: C.surf, border: `1px solid ${C.rule}`, color: C.teal, fontFamily: SANS, fontSize: 13.5, fontWeight: 700, padding: '10px 18px', marginTop: 9 }}>
+          強制重新載入最新版
+        </button>
+        <div style={{ fontSize: 11.5, color: C.ink3, lineHeight: 1.7, marginTop: 8 }}>
+          重新載入不會影響你的拜訪紀錄與補登——那些存在瀏覽器，跟程式碼分開。
         </div>
       </div>
 
@@ -2030,17 +2076,30 @@ export default function App() {
 
   const [backups, setBackups] = useState([]);
   const [entries, setEntries] = useState([]);
+  const [lastExp, setLastExp] = useState(() => rawGet(KEY.exp));
   const [newVer, setNewVer] = useState(null);
 
-  // 版本偵測：iOS 桌面 App 的 HTTP 快取無法手動清除，改由程式主動比對
+  /* 版本偵測：iOS 桌面 App 的 HTTP 快取無法手動清除，改由程式主動比對。
+     必須在「每次回到前景」都檢查——iOS 從背景恢復 App 時不會重新掛載元件，
+     只在載入時檢查一次的話，使用者永遠等不到更新提示。 */
   useEffect(() => {
     if (typeof fetch !== 'function') return;   // 缺少 fetch 的環境直接略過，不得讓版本偵測拖垮整個畫面
-    try {
-    fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((v) => { if (v && v.version && v.version !== APP_VERSION) setNewVer(v); })
-      .catch(() => {});
-    } catch { /* 版本偵測失敗不影響任何功能 */ }
+    const check = () => {
+      try {
+        fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((v) => { if (v && v.version && v.version !== APP_VERSION) setNewVer(v); })
+          .catch(() => {});
+      } catch { /* 版本偵測失敗不影響任何功能 */ }
+    };
+    check();
+    const onVisible = () => { if (!document.hidden) check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', check);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', check);
+    };
   }, []);
 
   useEffect(() => {
@@ -2109,6 +2168,27 @@ export default function App() {
           ))}
         </nav>
 
+        {(() => {
+          const n = log.length + entries.length;
+          if (n === 0) return null;
+          const days = lastExp ? Math.floor((Date.now() - new Date(lastExp)) / 86400000) : null;
+          if (days !== null && days < BACKUP_DUE_DAYS) return null;
+          return (
+            <div className="px-4 py-3" style={{ background: C.amberBg, borderBottom: `1px solid #E8D9B8` }}>
+              <div className="flex items-center flex-wrap" style={{ gap: 10 }}>
+                <div style={{ flex: '1 1 200px', fontSize: 12.5, color: '#4A3608', lineHeight: 1.7 }}>
+                  {days === null
+                    ? <>你有 <b>{n}</b> 筆資料，<b>還沒下載過備份</b>。iOS 會清除長期未使用網站的本機資料，下載下來的 JSON 才是安全的那一份。</>
+                    : <>距上次備份已 <b>{days}</b> 天，共 <b>{n}</b> 筆資料未備份。</>}
+                </div>
+                <button onClick={() => setTab('data')}
+                  style={{ background: '#4A3608', color: '#fff', fontFamily: SANS, fontSize: 13.5, fontWeight: 700, padding: '9px 16px' }}>
+                  去備份
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         {newVer && (
           <div className="px-4 py-3" style={{ background: C.teal, color: '#fff' }}>
             <div className="flex items-center flex-wrap" style={{ gap: 10 }}>
@@ -2143,7 +2223,7 @@ export default function App() {
         ) : tab === 'sched' ? (
           <Schedule entries={entries} />
         ) : (
-          <DataScreen log={log} onReplace={persist} backups={backups} onRestore={restore} entries={entries} />
+          <DataScreen log={log} onReplace={persist} backups={backups} onRestore={restore} entries={entries} onExported={() => setLastExp(rawGet(KEY.exp))} />
         )}
 
         <footer className="px-4 py-6" style={{ fontSize: 11.5, color: C.ink3, lineHeight: 1.8, borderTop: `1px solid ${C.rule}`, marginTop: 20 }}>
