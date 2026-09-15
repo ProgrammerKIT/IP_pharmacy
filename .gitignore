@@ -1,0 +1,18 @@
+# ── 客戶資料：一律不進 repo ────────────────────────────────
+# 依「程式更新 vs 客戶資料同步，兩條路徑分開」原則。
+# 這些檔案含 22 家客戶名稱地址、兩年金額、單價、側源情報與談判條件。
+data.json
+baseline.json
+baseline_*.json
+pharmacy-data.json
+play_src.js
+
+# SOP 主檔：含全部裁定、客戶特註、價格帶 → 只留在 Claude Project
+*SOP*.md
+獨立藥局_月度分析*.md
+
+# 建置中間產物
+build_src.jsx
+bundle.js
+node_modules/
+package*.json
