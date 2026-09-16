@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.0.2';
+const APP_VERSION = '2.0.3';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.0.3', '2026-09-15', '修正：兩年皆掛零的品項線在客戶卡整列不顯示，該線的補登因而無處可掛、靜默消失在畫面上（資料其實有存）。改為有補登即列出並標「首見」——掛零線突然來單正是最該看見的訊號'],
   ['2.0.2', '2026-09-15', '修正：客戶卡補登欄位的標籤寫死為「7/31」，官方截止日推進後未跟著更新（數字一直是對的，只有標籤過期）。改為由資料檔的截止日導出'],
   ['2.0.1', '2026-09-12', '修正 v2.0.0：客戶清單、豁免比對集合、補登截止日等衍生值誤在模組層求值，當時資料檔尚未匯入，導致接單頁客戶選單全空。改於匯入後統一重算，並在測試加入選單筆數斷言'],
   ['2.0.0', '2026-09-12', '程式與客戶資料分離：App 程式檔不再含任何客戶資料（分析數字、客戶劇本與禁區、優先序、豁免規則、單價全部移出），改由使用者匯入 pharmacy-data.json，只存在本機。首次啟動顯示匯入畫面；資料頁可更新資料檔，匯入前驗證格式、保留上一份可退回'],
@@ -686,7 +687,11 @@ function Card({ grp, onBack, onLog, entries }) {
     addBy[k].amt += (Number(e.paidEA) || 0) * (Number(e.unit) || 0);
   });
   const addAmt = Object.values(addBy).reduce((a, x) => a + x.amt, 0);
-  const live = d.items.filter((x) => x.s25 || x.s26);
+  /* 兩年皆 0 的品項線原本整列不顯示，導致該線的補登無處可掛——補登存進去了、
+     總額也算進去了，客戶卡上卻完全看不到，而且不會有任何錯誤訊息。
+     這種情況偏偏最值得注意（掛零線突然來單＝側源不穩或新導入），故一併列出。
+     （2026/09/15 修，原為 x.s25 || x.s26。） */
+  const live = d.items.filter((x) => x.s25 || x.s26 || addBy[x.item]);
   const warns = allCadence(grp, entries).filter((c) => {
     if (!c.ok) return false;
     const gap = (new Date(TODAY_STR()) - new Date(c.last)) / 86400000;
@@ -774,6 +779,9 @@ function Card({ grp, onBack, onLog, entries }) {
                 <div style={{ flex: 1.5 }}>
                   <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: C.ink }}>{x.item}</span>
                   <span style={{ fontFamily: MONO, fontSize: 9, color: x.p === 'P1' ? C.teal : C.ink3, marginLeft: 5 }}>{x.p}</span>
+                  {!x.s25 && !x.s26 && addBy[x.item] && (
+                    <span style={{ fontFamily: MONO, fontSize: 9, color: C.green, border: `1px solid ${C.green}`, padding: '0 4px', marginLeft: 5 }}>首見</span>
+                  )}
                 </div>
                 <div style={{ flex: 1, textAlign: 'right' }}><Num size={12} color={C.ink3}>{nf(x.s25)}</Num></div>
                 <div style={{ flex: 1, textAlign: 'right' }}><Num size={12}>{nf(x.s26)}</Num></div>
