@@ -81,7 +81,7 @@ function autoTopics(grp, entries) {
     if (exempt(grp, c.item) || !c.ok) return;
     const gap = Math.round((new Date(TODAY_STR()) - new Date(c.last)) / 86400000);
     if (gap >= c.avg_int * 2) out.push({ pri: 1, kind: '查證',
-      t: `${c.item} 已 ${gap} 天沒訂`, d: `平均 ${c.avg_int} 天一訂，已達 ${(gap / c.avg_int).toFixed(1)} 倍。問是賣不動、被競品接走，還是採購節奏改了。` });
+      t: `${c.item} 已 ${gap} 天沒訂`, d: `訂單平均相隔 ${c.avg_int} 天，已達 ${(gap / c.avg_int).toFixed(1)} 倍。問是賣不動、被競品接走，還是採購節奏改了。` });
   });
   (d.zero || []).forEach((z) => {
     if (exempt(grp, z.item)) return;
@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.1.2';
+const APP_VERSION = '2.1.3';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.1.3', '2026-09-20', '用詞統一：天數一律稱「訂單平均相隔」、數量一律稱「平均每批」——原本兩者都叫「平均」但單位不同（天 vs EA），容易混淆。說明欄加註兩詞差異'],
   ['2.1.2', '2026-09-19', '手機閱讀優化：「單條線排程」84 條改為預設收合（整頁由約 10,400 字降到約 2,400 字）；摘要列改為 sticky，捲動時固定在頂部；滅火區警訊列改為品項與倍數同一行、細節縮次行，窄螢幕不再拆行'],
   ['2.1.1', '2026-09-19', '排程頁改為一眼可讀：頂部加摘要列（滅火幾家幾條、效率幾家、最急是誰）；算法與欄位說明改為預設收合（內容不刪）；效率區預設只列 5 家且明細收起，滅火區維持完整攤開'],
   ['2.1.0', '2026-09-19', '排程改為兩區：「先滅火」（有斷單警訊，依警訊條數→最高倍數）與「效率排程」（無警訊，依一趟收得完的比率）。並修正只列建議日已過的線——原本未到期的線也算進「一趟收 N 條」，使訂得勤的健康客戶排在前面、出事的客戶被擠到後面。說明欄補上排序規則'],
@@ -1298,7 +1299,7 @@ function LineChip({ x, dim }) {
       border: `1px ${dim ? 'dashed' : 'solid'} ${C.rule}`, background: dim ? 'transparent' : '#F4F8F9', padding: '3px 8px' }}>
       {x.item}
       <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 5 }}>
-        末單 {String(x.last).slice(5)} · {gapDays}天 · {qty} EA{avg ? `（平均 ${avg}）` : ''}
+        末單 {String(x.last).slice(5)} · {gapDays}天 · {qty} EA{avg ? `（平均每批 ${avg}）` : ''}
       </span>
     </span>
   );
@@ -1339,7 +1340,7 @@ function StoreCard({ st, days, fire, compact }) {
                 </span>
               </div>
               <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 1 }}>
-                末單 {String(w.last).slice(5)} · 平均 {w.avg_int} 天
+                末單 {String(w.last).slice(5)} · 訂單平均相隔 {w.avg_int} 天
               </div>
             </div>
           ))}
@@ -1439,17 +1440,17 @@ function Schedule({ entries }) {
       {help && (
       <div style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '13px 15px', marginTop: 9 }}>
         <div style={{ fontSize: 13, color: C.ink2, lineHeight: 1.85 }}>
-          兩種算法並列。<b style={{ color: C.ink }}>間隔法</b>取這條線歷次訂單的平均天數，穩但看不見批量變化；
-          <b style={{ color: C.ink }}>消化法</b>再乘上「這批 ÷ 平均批」的倍數，會反映對方這次是進多了還是進少了。
+          兩種算法並列。<b style={{ color: C.ink }}>間隔法</b>取這條線的訂單平均相隔天數，穩但看不見批量變化；
+          <b style={{ color: C.ink }}>消化法</b>再乘上「這批 ÷ 平均每批」的倍數，會反映對方這次是進多了還是進少了。
         </div>
         <Rule my={11} />
         <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.ink, lineHeight: 1.9 }}>
-          間隔法 = 最後訂單日 + 平均間隔 − 7<br />
-          消化法 = 最後訂單日 + 平均間隔 × (本批量 ÷ 平均批量) − 7
+          間隔法 = 最後訂單日 + 訂單平均相隔 − 7<br />
+          消化法 = 最後訂單日 + 訂單平均相隔 × (本批量 ÷ 平均每批) − 7
         </div>
         <Rule my={11} />
         <div style={{ fontSize: 12, color: C.ink2, lineHeight: 1.8 }}>
-          月均流速改由「平均批量 ÷ 平均間隔」推算，不用「總 EA ÷ 7 個月」——後者對年中才開始或中途停掉的線會嚴重低估流速，
+          月均流速改由「平均每批 ÷ 訂單平均相隔」推算，不用「總 EA ÷ 7 個月」——後者對年中才開始或中途停掉的線會嚴重低估流速，
           把消化時間灌成一兩百天。曾有一條線因此被誤判成「剛進大批」，改算法後回到穩定。
         </div>
       </div>
@@ -1477,14 +1478,18 @@ function Schedule({ entries }) {
 
         <div style={{ marginTop: 11, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.ink }}>品項方塊</div>
         <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.ink, background: C.bg, border: `1px solid ${C.hair}`, padding: '7px 9px', marginTop: 5 }}>
-          Ultra MD　末單 07-01 · 80天 · 35+5 EA（平均 62.5）
+          Ultra MD　末單 07-01 · 80天 · 35+5 EA（平均每批 62.5）
         </div>
         <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.95, marginTop: 6 }}>
           <b style={{ color: C.ink }}>末單 07-01</b>　這條線最後一次下單的日期（月-日）。<br />
           <b style={{ color: C.ink }}>80天</b>　從那天到今天的天數。<u>進門講話用這個</u>，客戶聽得懂。<br />
+          <span style={{ color: C.ink3 }}>
+            注意兩個容易混的詞：<b style={{ color: C.ink2 }}>訂單平均相隔</b>＝兩次下單間隔幾<b>天</b>；
+            <b style={{ color: C.ink2 }}>平均每批</b>＝每次訂多少<b>支／盒</b>。單位不同。
+          </span><br />
           <b style={{ color: C.ink }}>35+5 EA</b>　末單的數量：<b style={{ color: C.ink }}>35 支付費</b>
           ＋<b style={{ color: C.ink }}>5 支贈品</b>。沒有搭贈就只寫一個數字。<br />
-          <b style={{ color: C.ink }}>（平均 62.5）</b>　這條線歷次訂單的平均每批數量，單位同為 EA（含贈品）。<br />
+          <b style={{ color: C.ink }}>（平均每批 62.5）</b>　這條線歷次訂單的平均每次數量，單位是 EA（含贈品），<u>不是天數</u>。<br />
           <span style={{ color: C.ink3 }}>
             拿末單量對平均看：<b style={{ color: C.ink2 }}>明顯少於平均</b>＝這次只訂半批，可能在試水溫或分單，可提早去；
             <b style={{ color: C.ink2 }}>明顯多於平均</b>＝剛吃下大批貨，別急著推，先盯去化。
@@ -1501,7 +1506,7 @@ function Schedule({ entries }) {
             同一家有多條線同時斷，問題通常比單線更深。<br />
             <b style={{ color: C.ink }}>② 效率排程</b>（無警訊的店）：依<b style={{ color: C.ink }}>一趟收得完的比率</b>高的優先，
             比率相同再比建議日早的。<br />
-            <b style={{ color: C.ink }}>倍數</b>＝距末單天數 ÷ 該線平均間隔。達 <b style={{ color: C.ink }}>2 倍</b>即列為斷單警訊。
+            <b style={{ color: C.ink }}>倍數</b>＝距末單天數 ÷ 該線訂單平均相隔。達 <b style={{ color: C.ink }}>2 倍</b>即列為斷單警訊。
             用倍數不用天數，因為天數沒有除掉各店本來的訂貨頻率：兩個月訂一次的店逾 131 天只是剛過兩輪，
             半個月訂一次的店逾 60 天等於跳過三次半。
           </div>
