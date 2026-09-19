@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.0.3';
+const APP_VERSION = '2.0.4';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.0.4', '2026-09-19', '排程方塊改顯示末單日、距今天數、末單數量(含贈品)與平均批量，標題明確標示「建議」日；斷單警訊改依倍數排序並顯示倍數（天數未除掉各店訂貨頻率）；今天改用台北時區（原為 UTC，午夜到早上 8 點會少算一天）'],
   ['2.0.3', '2026-09-15', '修正：兩年皆掛零的品項線在客戶卡整列不顯示，該線的補登因而無處可掛、靜默消失在畫面上（資料其實有存）。改為有補登即列出並標「首見」——掛零線突然來單正是最該看見的訊號'],
   ['2.0.2', '2026-09-15', '修正：客戶卡補登欄位的標籤寫死為「7/31」，官方截止日推進後未跟著更新（數字一直是對的，只有標籤過期）。改為由資料檔的截止日導出'],
   ['2.0.1', '2026-09-12', '修正 v2.0.0：客戶清單、豁免比對集合、補登截止日等衍生值誤在模組層求值，當時資料檔尚未匯入，導致接單頁客戶選單全空。改於匯入後統一重算，並在測試加入選單筆數斷言'],
@@ -293,22 +294,34 @@ let HA_PITCH = '';
    官方訂單（DATA.orders，唯讀）＋ 補登（未歸檔者）合併後計算。
    任何頁面要用間隔／流速／建議日，都呼叫 cadence()，不得自行推算。
    ══════════════════════════════════════════════════════════ */
-const TODAY_STR = () => new Date().toISOString().slice(0, 10);
+/* toISOString() 給的是 UTC 日期。台北快 8 小時，台北時間午夜到早上 8 點之間
+   會被判成前一天，所有逾期天數與建議日都少一天——固定方向的偏差，比隨機誤差難察覺。
+   （2026/09/19 修。） */
+const TODAY_STR = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 
 function cadence(grp, item, entries) {
-  const base = ((DATA[grp] || {}).orders || {})[item] || [];
+  /* orders 新格式 [日期, 付費EA, 贈品EA]；舊格式 [日期, 總EA] 仍相容（贈品視為 0）。
+     節奏一律用總量計算，付費／贈品只在顯示時拆開。 */
+  const base = (((DATA[grp] || {}).orders || {})[item] || [])
+    .map((r) => (r.length >= 3 ? [r[0], Number(r[1]) || 0, Number(r[2]) || 0] : [r[0], Number(r[1]) || 0, 0]));
   const extra = liveEntries(entries).filter((e) => e.grp === grp && e.item === item)
-    .map((e) => [e.date, (Number(e.paidEA) || 0) + (Number(e.giftEA) || 0)]);
+    .map((e) => [e.date, Number(e.paidEA) || 0, Number(e.giftEA) || 0]);
   const byDate = {};
-  [...base, ...extra].forEach(([d, ea]) => { byDate[d] = (byDate[d] || 0) + ea; });
-  const b = Object.entries(byDate).filter(([, ea]) => ea > 0).sort((a, x) => (a[0] < x[0] ? -1 : 1));
+  [...base, ...extra].forEach(([d, p, g]) => {
+    if (!byDate[d]) byDate[d] = { p: 0, g: 0 };
+    byDate[d].p += p; byDate[d].g += g;
+  });
+  const b = Object.entries(byDate).map(([d, v]) => [d, v.p + v.g, v.p, v.g])
+    .filter((x) => x[1] > 0).sort((a, x) => (a[0] < x[0] ? -1 : 1));
   if (b.length === 0) return null;
   const added = extra.length > 0;
   const last = b[b.length - 1][0];
   const lastBatch = b[b.length - 1][1];
+  const lastPaid = b[b.length - 1][2];
+  const lastGift = b[b.length - 1][3];
   const avgBatch = b.reduce((a, x) => a + x[1], 0) / b.length;
   if (b.length < 2) {
-    return { item, n: 1, ok: false, why: '僅 1 筆訂單，無法計算間隔', last, added, avgBatch, lastBatch };
+    return { item, n: 1, ok: false, why: '僅 1 筆訂單，無法計算間隔', last, added, avgBatch, lastBatch, lastPaid, lastGift };
   }
   const ints = b.slice(1).map((x, i) => (new Date(x[0]) - new Date(b[i][0])) / 86400000);
   const avgInt = ints.reduce((a, x) => a + x, 0) / ints.length;
@@ -320,7 +333,7 @@ function cadence(grp, item, entries) {
   if (b.length <= 2) { ok = false; why = '僅 2 筆訂單，平均間隔樣本數為 1'; }
   else if (Math.abs(diff) > 90) { ok = false; why = `兩法差距 ${Math.abs(diff).toFixed(0)} 天，流速估計不穩`; }
   return {
-    item, n: b.length, ok, why, last, added,
+    item, n: b.length, ok, why, last, added, lastPaid, lastGift,
     avg_int: +avgInt.toFixed(1), avg_batch: +avgBatch.toFixed(1), last_batch: +lastBatch.toFixed(1),
     ratio: +ratio.toFixed(2), dep: +dep.toFixed(1), diff: +diff.toFixed(1),
     flow: +(avgBatch / avgInt * 30.44).toFixed(1),
@@ -1091,9 +1104,16 @@ function Review({ log, onClear, onEdit, entries }) {
     allCadence(d.grp, entries).filter((c) => {
       if (!c.ok) return false;
       return (new Date(today) - new Date(c.last)) / 86400000 >= c.avg_int * 2;
-    }).map((c) => ({ grp: d.grp, item: c.item, avg: c.avg_int, gap: Math.round((new Date(today) - new Date(c.last)) / 86400000) }))
+    }).map((c) => {
+      const gap = Math.round((new Date(today) - new Date(c.last)) / 86400000);
+      return { grp: d.grp, item: c.item, avg: c.avg_int, gap, ratio: c.avg_int ? gap / c.avg_int : 0 };
+    })
   );
-  const allWarns = rawWarns.filter((w) => !exempt(w.grp, w.item));
+  /* 依「倍數」排序，不是逾期天數——天數沒有除掉各店本來的訂貨頻率。
+     兩個多月訂一次的店逾 131 天只是剛過兩輪；半個月訂一次的店逾 60 天
+     等於跳過三次半，後者才是真的不對勁。 */
+  const allWarns = rawWarns.filter((w) => !exempt(w.grp, w.item))
+    .sort((a, b) => b.ratio - a.ratio);
   const exWarns = rawWarns.filter((w) => exempt(w.grp, w.item));
 
   return (
@@ -1132,7 +1152,7 @@ function Review({ log, onClear, onEdit, entries }) {
           {allWarns.map((w, i) => (
             <div key={i} className="flex justify-between items-baseline px-4 py-2" style={{ borderBottom: `1px solid ${C.hair}` }}>
               <span style={{ fontSize: 13, color: C.ink }}>{w.grp}　<span style={{ color: C.ink2 }}>{w.item}</span></span>
-              <span><Num size={11} color={C.ink3}>平均 {w.avg} 天</Num><span style={{ color: C.ink3, margin: '0 6px' }}>·</span><Num size={12} color={C.amber}>{w.gap} 天未訂</Num></span>
+              <span><Num size={11} color={C.ink3}>平均 {w.avg} 天</Num><span style={{ color: C.ink3, margin: '0 6px' }}>·</span><Num size={12} color={C.amber}>{w.gap} 天未訂</Num><span style={{ color: C.ink3, margin: '0 6px' }}>·</span><Num size={12.5} color={C.red} weight={600}>{w.ratio.toFixed(2)} 倍</Num></span>
             </div>
           ))}
         </div>
@@ -1256,6 +1276,30 @@ const SIG_D = {
   '訂得比平常少': '這次訂得比平常少，提早去看發生什麼事',
 };
 
+/* 排程方塊：標題放「建議拜訪日」（排行程用），方塊放「末單日」（進門講話用）。
+   兩者是不同的天數——建議日逾期 38 天，可能實際已 80 天沒下單，別混為一談。 */
+function lastInfo(x) {
+  const gapDays = Math.round((new Date(TODAY_STR()) - new Date(x.last)) / 86400000);
+  const paid = x.lastPaid != null ? x.lastPaid : x.last_batch;
+  const gift = x.lastGift || 0;
+  const qty = `${paid}${gift ? `+${gift}` : ''}`;
+  const avg = x.avg_batch != null ? x.avg_batch : null;
+  return { gapDays, qty, avg };
+}
+
+function LineChip({ x, dim }) {
+  const { gapDays, qty, avg } = lastInfo(x);
+  return (
+    <span style={{ fontFamily: SANS, fontSize: 12, color: dim ? C.ink3 : C.ink,
+      border: `1px ${dim ? 'dashed' : 'solid'} ${C.rule}`, background: dim ? 'transparent' : '#F4F8F9', padding: '3px 8px' }}>
+      {x.item}
+      <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 5 }}>
+        末單 {String(x.last).slice(5)} · {gapDays}天 · {qty} EA{avg ? `（平均 ${avg}）` : ''}
+      </span>
+    </span>
+  );
+}
+
 function Schedule({ entries }) {
   const TODAY = new Date(TODAY_STR());
   const [open, setOpen] = useState(null);
@@ -1330,26 +1374,19 @@ function Schedule({ entries }) {
                     一趟收 {st.hit.length}／{st.lines.length} 條
                   </span>
                   <span style={{ marginLeft: 'auto' }}>
+                    <Num size={10.5} color={C.ink3}>建議 </Num>
                     <Num size={13} color={od > 0 ? C.red : C.ink} weight={600}>{st.date}</Num>
-                    <Num size={10.5} color={C.ink3}>{od > 0 ? `　逾期 ${od} 天` : `　還有 ${-od} 天`}</Num>
+                    <Num size={10.5} color={C.ink3}>{od > 0 ? `　逾 ${od} 天` : `　還有 ${-od} 天`}</Num>
                   </span>
                 </div>
                 <div className="flex flex-wrap" style={{ gap: 5, marginTop: 9 }}>
-                  {st.hit.map((x) => (
-                    <span key={x.item} style={{ fontFamily: SANS, fontSize: 12, color: C.ink, border: `1px solid ${C.rule}`, background: '#F4F8F9', padding: '3px 8px' }}>
-                      {x.item}<span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 5 }}>{x.d_int.slice(5)}</span>
-                    </span>
-                  ))}
+                  {st.hit.map((x) => <LineChip key={x.item} x={x} />)}
                 </div>
                 {st.miss.length > 0 && (
                   <div style={{ marginTop: 9, borderTop: `1px dashed ${C.rule}`, paddingTop: 8 }}>
                     <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 600 }}>另 {st.miss.length} 條這天還沒熟，不要硬談，要分次去</div>
                     <div className="flex flex-wrap" style={{ gap: 5, marginTop: 6 }}>
-                      {st.miss.map((x) => (
-                        <span key={x.item} style={{ fontFamily: SANS, fontSize: 12, color: C.ink3, border: `1px dashed ${C.rule}`, padding: '3px 8px' }}>
-                          {x.item}<span style={{ fontFamily: MONO, fontSize: 10, marginLeft: 5 }}>{x.d_int.slice(5)}</span>
-                        </span>
-                      ))}
+                      {st.miss.map((x) => <LineChip key={x.item} x={x} dim />)}
                     </div>
                   </div>
                 )}
