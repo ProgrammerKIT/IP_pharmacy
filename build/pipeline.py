@@ -135,9 +135,13 @@ def build(df):
         # 2026 逐筆訂單（節奏計算用，前端會再併入補登）
         orders = {}
         for it, s in gb.groupby('Item'):
-            ser = s.groupby('D')['EA'].sum().sort_index()
-            ser = ser[ser != 0]
-            if len(ser): orders[it] = [[str(k.date()), float(v)] for k, v in ser.items()]
+            # [日期, 付費EA, 贈品EA]。節奏用總量(付費+贈品)，顯示時才拆開。
+            # 舊格式為 [日期, 總EA] 兩欄，前端相容處理。
+            agg = s.assign(paid=s.EA.where(s.Sales != 0, 0), gift=s.EA.where(s.Sales == 0, 0)) \
+                   .groupby('D')[['paid', 'gift']].sum().sort_index()
+            agg = agg[(agg.paid + agg.gift) != 0]
+            if len(agg):
+                orders[it] = [[str(k.date()), float(r.paid), float(r.gift)] for k, r in agg.iterrows()]
 
         # 歸零線：以去年【全年】判定，才看得到下半年才斷的線（裁定 17）
         zero = []
