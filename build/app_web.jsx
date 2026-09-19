@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.0.5';
+const APP_VERSION = '2.1.2';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,9 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.1.2', '2026-09-19', '手機閱讀優化：「單條線排程」84 條改為預設收合（整頁由約 10,400 字降到約 2,400 字）；摘要列改為 sticky，捲動時固定在頂部；滅火區警訊列改為品項與倍數同一行、細節縮次行，窄螢幕不再拆行'],
+  ['2.1.1', '2026-09-19', '排程頁改為一眼可讀：頂部加摘要列（滅火幾家幾條、效率幾家、最急是誰）；算法與欄位說明改為預設收合（內容不刪）；效率區預設只列 5 家且明細收起，滅火區維持完整攤開'],
+  ['2.1.0', '2026-09-19', '排程改為兩區：「先滅火」（有斷單警訊，依警訊條數→最高倍數）與「效率排程」（無警訊，依一趟收得完的比率）。並修正只列建議日已過的線——原本未到期的線也算進「一趟收 N 條」，使訂得勤的健康客戶排在前面、出事的客戶被擠到後面。說明欄補上排序規則'],
   ['2.0.5', '2026-09-19', '排程頁新增「欄位說明」區塊：逐項說明建議日、逾期天數、一趟收 N／M、末單日、天數、付費+贈品數量、平均批量各代表什麼，並點出「逾 38 天」與「80天」是兩個不同基準'],
   ['2.0.4', '2026-09-19', '排程方塊改顯示末單日、距今天數、末單數量(含贈品)與平均批量，標題明確標示「建議」日；斷單警訊改依倍數排序並顯示倍數（天數未除掉各店訂貨頻率）；今天改用台北時區（原為 UTC，午夜到早上 8 點會少算一天）'],
   ['2.0.3', '2026-09-15', '修正：兩年皆掛零的品項線在客戶卡整列不顯示，該線的補登因而無處可掛、靜默消失在畫面上（資料其實有存）。改為有補登即列出並標「首見」——掛零線突然來單正是最該看見的訊號'],
@@ -1301,7 +1304,74 @@ function LineChip({ x, dim }) {
   );
 }
 
+function StoreCard({ st, days, fire, compact }) {
+  const [open, setOpen] = useState(false);
+  const od = days(st.date);
+  const full = st.rate === 1;
+  const detail = !compact || open;
+  return (
+    <div style={{ background: C.surf, border: `1px solid ${fire ? C.amber : (full ? C.rule : C.hair)}`, padding: '12px 14px' }}>
+      <div className="flex items-baseline flex-wrap" style={{ gap: 9 }}>
+        <span style={{ fontFamily: SANS, fontSize: 16, fontWeight: 900, color: C.ink }}>{st.grp}</span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: full ? C.green : C.ink2 }}>
+          一趟收 {st.hit.length}／{st.lines.length} 條
+        </span>
+        {fire && (
+          <span style={{ fontFamily: MONO, fontSize: 10, color: '#fff', background: C.amber, padding: '2px 6px' }}>
+            {st.warns.length} 條警訊 · 最高 {st.maxr.toFixed(2)} 倍
+          </span>
+        )}
+        <span style={{ marginLeft: 'auto' }}>
+          <Num size={10.5} color={C.ink3}>建議 </Num>
+          <Num size={13} color={od > 0 ? C.red : C.ink} weight={600}>{st.date}</Num>
+          <Num size={10.5} color={C.ink3}>{od > 0 ? `　逾 ${od} 天` : `　還有 ${-od} 天`}</Num>
+        </span>
+      </div>
+      {fire && (
+        <div style={{ marginTop: 8, background: C.amberBg, border: `1px solid ${C.amber}`, padding: '8px 10px' }}>
+          {st.warns.map((w) => (
+            <div key={w.item} style={{ marginBottom: 4 }}>
+              {/* 品項與倍數同一行（窄螢幕也不拆開），細節縮到次行 */}
+              <div className="flex items-baseline" style={{ gap: 8 }}>
+                <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: C.ink }}>{w.item}</span>
+                <span style={{ marginLeft: 'auto' }}>
+                  <Num size={13} color={C.red} weight={600}>{w.wr.toFixed(2)} 倍</Num>
+                </span>
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 1 }}>
+                末單 {String(w.last).slice(5)} · 平均 {w.avg_int} 天
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {compact && (
+        <button onClick={() => setOpen(!open)}
+          style={{ fontFamily: SANS, fontSize: 12, color: C.teal, background: 'none', border: 'none', padding: '7px 0 0', display: 'block' }}>
+          {open ? '收合明細' : `展開 ${st.lines.length} 條線的末單與批量`}
+        </button>
+      )}
+      {detail && (
+      <div className="flex flex-wrap" style={{ gap: 5, marginTop: 9 }}>
+        {st.hit.map((x) => <LineChip key={x.item} x={x} />)}
+      </div>
+      )}
+      {detail && st.miss.length > 0 && (
+        <div style={{ marginTop: 9, borderTop: `1px dashed ${C.rule}`, paddingTop: 8 }}>
+          <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 600 }}>另 {st.miss.length} 條這天還沒熟，不要硬談，要分次去</div>
+          <div className="flex flex-wrap" style={{ gap: 5, marginTop: 6 }}>
+            {st.miss.map((x) => <LineChip key={x.item} x={x} dim />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Schedule({ entries }) {
+  const [help, setHelp] = useState(false);
+  const [effMore, setEffMore] = useState(false);
+  const [lineList, setLineList] = useState(false);
   const TODAY = new Date(TODAY_STR());
   const [open, setOpen] = useState(null);
   const rows = [], weak = [], exs = [];
@@ -1323,8 +1393,13 @@ function Schedule({ entries }) {
 
   // 門店成熟度：找出一趟拜訪（±14 天）能覆蓋最多線的日期
   const WIN = 14;
+  /* 只有「建議日已過」的線才進排程。原本把未到期的線也算進「一趟收 N 條」，
+     使訂得越勤的客戶 rate 越高、排名越前——而訂得勤通常代表這家沒問題。
+     結果是健康的大客戶被排在前面，出事的客戶被擠到後面。
+     （案例：某客戶八條線倍數全低於 1.2、其中兩條倍數 0.03–0.05 是前一天才下的單，
+     卻顯示成「一趟收 6／8 條」的效率之星。2026/09/19 修。） */
   const byStore = {};
-  rows.forEach((r) => { (byStore[r.grp] = byStore[r.grp] || []).push(r); });
+  rows.filter((r) => r.d_int <= TODAY_STR()).forEach((r) => { (byStore[r.grp] = byStore[r.grp] || []).push(r); });
   const stores = Object.entries(byStore).map(([grp, lines]) => {
     let best = null;
     lines.forEach((c) => {
@@ -1334,8 +1409,19 @@ function Schedule({ entries }) {
       }
     });
     const miss = lines.filter((x) => !best.hit.includes(x)).sort((a, b) => (a.d_int < b.d_int ? -1 : 1));
-    return { grp, lines, date: best.date, hit: best.hit, miss, rate: best.hit.length / lines.length };
-  }).sort((a, b) => (b.rate - a.rate) || (a.date < b.date ? -1 : 1));
+    const warns = lines.filter((x) => {
+      const gap = (new Date(TODAY_STR()) - new Date(x.last)) / 86400000;
+      return x.avg_int && gap / x.avg_int >= 2;
+    }).map((x) => ({ ...x, wr: ((new Date(TODAY_STR()) - new Date(x.last)) / 86400000) / x.avg_int }))
+      .sort((a, b) => b.wr - a.wr);
+    return { grp, lines, date: best.date, hit: best.hit, miss, rate: best.hit.length / lines.length,
+             warns, maxr: warns.length ? warns[0].wr : 0 };
+  });
+  /* 兩區分開排，不混成單一公式——滅火與效率是兩種目的，讓使用者自己決定這週做哪件。 */
+  const fireStores = stores.filter((s2) => s2.warns.length)
+    .sort((a, b) => (b.warns.length - a.warns.length) || (b.maxr - a.maxr));
+  const effStores = stores.filter((s2) => !s2.warns.length)
+    .sort((a, b) => (b.rate - a.rate) || (a.date < b.date ? -1 : 1));
   weak.sort((a, b) => (a.grp < b.grp ? -1 : 1));
   const days = (s) => Math.round((TODAY - new Date(s)) / 86400000);
 
@@ -1344,7 +1430,14 @@ function Schedule({ entries }) {
       <Eyebrow>Cadence · 於估算庫存見底前一週拜訪</Eyebrow>
       <h2 style={{ fontFamily: SANS, fontSize: 24, fontWeight: 900, color: C.ink, marginTop: 6 }}>拜訪節奏</h2>
 
-      <div style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '13px 15px', marginTop: 12 }}>
+      <button onClick={() => setHelp(!help)}
+        style={{ width: '100%', textAlign: 'left', background: C.surf, border: `1px solid ${C.hair}`,
+          padding: '10px 15px', marginTop: 12, fontFamily: SANS, fontSize: 12.5, color: C.teal }}>
+        {help ? '▾ 收起說明' : '▸ 算法與欄位說明（數字的單位、清單怎麼排的）'}
+      </button>
+
+      {help && (
+      <div style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '13px 15px', marginTop: 9 }}>
         <div style={{ fontSize: 13, color: C.ink2, lineHeight: 1.85 }}>
           兩種算法並列。<b style={{ color: C.ink }}>間隔法</b>取這條線歷次訂單的平均天數，穩但看不見批量變化；
           <b style={{ color: C.ink }}>消化法</b>再乘上「這批 ÷ 平均批」的倍數，會反映對方這次是進多了還是進少了。
@@ -1361,6 +1454,9 @@ function Schedule({ entries }) {
         </div>
       </div>
 
+      )}
+      {help && (
+      <>
       {/* 欄位說明：每個數字的單位與意義。放在算法說明與清單之間，
           免得隔幾週回來看不記得「80天」「35+5」「平均 62.5」各是什麼。 */}
       <div style={{ marginTop: 18, background: C.surf, border: `1px solid ${C.rule}`, padding: '13px 15px' }}>
@@ -1395,16 +1491,88 @@ function Schedule({ entries }) {
           </span>
         </div>
 
+        <div style={{ marginTop: 11, borderTop: `1px solid ${C.hair}`, paddingTop: 9 }}>
+          <div style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.ink }}>清單怎麼排的</div>
+          <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.95, marginTop: 4 }}>
+            分兩區，不混在一起排——<b style={{ color: C.ink }}>滅火</b>和<b style={{ color: C.ink }}>效率</b>是兩種目的，
+            這週要做哪件由你決定。<br />
+            <b style={{ color: C.ink }}>① 先滅火</b>（有斷單警訊的店）：依<b style={{ color: C.ink }}>警訊條數</b>多的優先，
+            同條數再比<b style={{ color: C.ink }}>最高倍數</b>。所以「2 條 3.48 倍」會排在「1 條 3.76 倍」前面——
+            同一家有多條線同時斷，問題通常比單線更深。<br />
+            <b style={{ color: C.ink }}>② 效率排程</b>（無警訊的店）：依<b style={{ color: C.ink }}>一趟收得完的比率</b>高的優先，
+            比率相同再比建議日早的。<br />
+            <b style={{ color: C.ink }}>倍數</b>＝距末單天數 ÷ 該線平均間隔。達 <b style={{ color: C.ink }}>2 倍</b>即列為斷單警訊。
+            用倍數不用天數，因為天數沒有除掉各店本來的訂貨頻率：兩個月訂一次的店逾 131 天只是剛過兩輪，
+            半個月訂一次的店逾 60 天等於跳過三次半。
+          </div>
+        </div>
+
         <div style={{ fontSize: 12, color: C.ink3, lineHeight: 1.85, marginTop: 11, borderTop: `1px solid ${C.hair}`, paddingTop: 9 }}>
+          <b>只列建議日已過的線。</b>還沒到期的不算進「一趟收 N 條」——否則訂得越勤的客戶比率越高、排名越前，
+          而訂得勤通常代表這家沒問題，反而把出事的客戶擠到後面。<br />
           EA ＝ 支／盒數（來源報表的數量單位），不是金額。
           所有天數都已納入「接單」頁的補登，不只官方 Offtake。
         </div>
       </div>
 
-      <div style={{ marginTop: 18 }}>
-        <SecHead n="1" t={`門店成熟度 ${stores.length} 家 · 排週行程用這張`} />
+      </>
+      )}
+
+      {/* 摘要列：不捲動就知道全局 */}
+      {/* sticky：手機捲到中段仍看得到全局，不必捲回頂部確認 */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 20, marginTop: 14, background: C.ink, padding: '11px 14px' }}>
+        <div className="flex items-baseline flex-wrap" style={{ gap: 14 }}>
+          <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: '#fff' }}>
+            滅火 {fireStores.length} 家
+            <span style={{ fontFamily: MONO, fontSize: 11, color: '#C9D6DB', marginLeft: 5 }}>
+              {fireStores.reduce((a, x) => a + x.warns.length, 0)} 條線
+            </span>
+          </span>
+          <span style={{ fontFamily: SANS, fontSize: 13.5, color: '#C9D6DB' }}>效率 {effStores.length} 家</span>
+          {fireStores.length > 0 && (
+            <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: C.amber }}>
+              最急 {fireStores[0].grp} · {fireStores[0].warns.length} 條 · {fireStores[0].maxr.toFixed(2)} 倍
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <SecHead n="1" t={`先滅火 · 有斷單警訊 ${fireStores.length} 家`} />
         <div style={{ display: 'grid', gap: 9 }}>
-          {stores.map((st) => {
+          {fireStores.length === 0 && (
+            <div style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '13px 15px', fontSize: 13, color: C.ink2 }}>
+              目前沒有任何線達到斷單門檻（逾期達平均間隔 2 倍）。
+            </div>
+          )}
+          {fireStores.map((st) => (
+            <StoreCard key={st.grp} st={st} days={days} fire />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <SecHead n="2" t={`效率排程 · 無警訊 ${effStores.length} 家`} />
+        <div style={{ fontSize: 12, color: C.ink3, lineHeight: 1.75, marginBottom: 8 }}>
+          這些店沒有任何線達到斷單門檻，去了是補單不是救火。明細預設收起，點開才看。
+        </div>
+        <div style={{ display: 'grid', gap: 9 }}>
+          {(effMore ? effStores : effStores.slice(0, 5)).map((st) => (
+            <StoreCard key={st.grp} st={st} days={days} compact />
+          ))}
+        </div>
+        {effStores.length > 5 && (
+          <button onClick={() => setEffMore(!effMore)}
+            style={{ width: '100%', marginTop: 9, background: C.surf, border: `1px solid ${C.rule}`,
+              padding: '10px', fontFamily: SANS, fontSize: 12.5, color: C.teal }}>
+            {effMore ? '收起' : `還有 ${effStores.length - 5} 家`}
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: 'none' }}>
+        <div style={{ display: 'grid', gap: 9 }}>
+          {[].map((st) => {
             const od = days(st.date);
             const full = st.rate === 1;
             return (
@@ -1442,8 +1610,18 @@ function Schedule({ entries }) {
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <SecHead n="2" t={`單條線排程 ${rows.length} 條 · 排單店節奏用這張`} />
-        <div style={{ background: C.surf, border: `1px solid ${C.hair}` }}>
+        <SecHead n="3" t={`單條線排程 ${rows.length} 條`} />
+        <button onClick={() => setLineList(!lineList)}
+          style={{ width: '100%', textAlign: 'left', background: C.surf, border: `1px solid ${C.hair}`,
+            padding: '10px 14px', fontFamily: SANS, fontSize: 12.5, color: C.teal }}>
+          {lineList ? '▾ 收起逐條清單' : `▸ 展開 ${rows.length} 條線（含消化法日期與兩法差距）`}
+        </button>
+        <div style={{ fontSize: 11.5, color: C.ink3, lineHeight: 1.75, marginTop: 6 }}>
+          上面兩區已按店聚合。這一區是按「線」攤平，多了<b>消化法日期</b>與<b>兩法差距</b>——
+          想知道某條線是不是剛進大批、該不該延後去，才需要點開。
+        </div>
+        {lineList && (
+        <div style={{ background: C.surf, border: `1px solid ${C.hair}`, marginTop: 9 }}>
           {rows.map((r, i) => {
             const od = days(r.d_int);
             const isOpen = open === `${r.grp}-${r.item}`;
@@ -1493,10 +1671,11 @@ function Schedule({ entries }) {
             );
           })}
         </div>
+        )}
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <SecHead n="3" t={`樣本不足 ${weak.length} 條 · 不給日期`} />
+        <SecHead n="4" t={`樣本不足 ${weak.length} 條 · 不給日期`} />
         <div style={{ background: C.surf, border: `1px solid ${C.hair}` }}>
           {weak.map((r, i) => (
             <div key={i} className="flex items-baseline flex-wrap px-3 py-2" style={{ borderBottom: `1px solid ${C.hair}`, gap: 8 }}>
