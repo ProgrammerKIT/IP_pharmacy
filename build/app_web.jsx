@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.0.4';
+const APP_VERSION = '2.0.5';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.0.5', '2026-09-19', '排程頁新增「欄位說明」區塊：逐項說明建議日、逾期天數、一趟收 N／M、末單日、天數、付費+贈品數量、平均批量各代表什麼，並點出「逾 38 天」與「80天」是兩個不同基準'],
   ['2.0.4', '2026-09-19', '排程方塊改顯示末單日、距今天數、末單數量(含贈品)與平均批量，標題明確標示「建議」日；斷單警訊改依倍數排序並顯示倍數（天數未除掉各店訂貨頻率）；今天改用台北時區（原為 UTC，午夜到早上 8 點會少算一天）'],
   ['2.0.3', '2026-09-15', '修正：兩年皆掛零的品項線在客戶卡整列不顯示，該線的補登因而無處可掛、靜默消失在畫面上（資料其實有存）。改為有補登即列出並標「首見」——掛零線突然來單正是最該看見的訊號'],
   ['2.0.2', '2026-09-15', '修正：客戶卡補登欄位的標籤寫死為「7/31」，官方截止日推進後未跟著更新（數字一直是對的，只有標籤過期）。改為由資料檔的截止日導出'],
@@ -1357,6 +1358,46 @@ function Schedule({ entries }) {
         <div style={{ fontSize: 12, color: C.ink2, lineHeight: 1.8 }}>
           月均流速改由「平均批量 ÷ 平均間隔」推算，不用「總 EA ÷ 7 個月」——後者對年中才開始或中途停掉的線會嚴重低估流速，
           把消化時間灌成一兩百天。曾有一條線因此被誤判成「剛進大批」，改算法後回到穩定。
+        </div>
+      </div>
+
+      {/* 欄位說明：每個數字的單位與意義。放在算法說明與清單之間，
+          免得隔幾週回來看不記得「80天」「35+5」「平均 62.5」各是什麼。 */}
+      <div style={{ marginTop: 18, background: C.surf, border: `1px solid ${C.rule}`, padding: '13px 15px' }}>
+        <Eyebrow>欄位說明 · 下面每個數字代表什麼</Eyebrow>
+
+        <div style={{ marginTop: 10, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.ink }}>卡片右上</div>
+        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.95, marginTop: 4 }}>
+          <b style={{ color: C.ink }}>建議 2026-08-12</b>　該店最早到期那條線的建議拜訪日（間隔法算的）。<br />
+          <b style={{ color: C.ink }}>逾 38 天</b>　距離那個<u>建議日</u>過了幾天。
+          <span style={{ color: C.amber }}>注意：這不是距離上次下單幾天</span>，那個在方塊裡。
+        </div>
+
+        <div style={{ marginTop: 11, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.ink }}>卡片左上</div>
+        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.95, marginTop: 4 }}>
+          <b style={{ color: C.ink }}>一趟收 3／5 條</b>　這家共 5 條線到期，其中 3 條落在同一個 ±14 天窗口，
+          一趟拜訪談得完；剩下 2 條那天還沒熟，硬談會變成推銷。
+        </div>
+
+        <div style={{ marginTop: 11, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.ink }}>品項方塊</div>
+        <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.ink, background: C.bg, border: `1px solid ${C.hair}`, padding: '7px 9px', marginTop: 5 }}>
+          Ultra MD　末單 07-01 · 80天 · 35+5 EA（平均 62.5）
+        </div>
+        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.95, marginTop: 6 }}>
+          <b style={{ color: C.ink }}>末單 07-01</b>　這條線最後一次下單的日期（月-日）。<br />
+          <b style={{ color: C.ink }}>80天</b>　從那天到今天的天數。<u>進門講話用這個</u>，客戶聽得懂。<br />
+          <b style={{ color: C.ink }}>35+5 EA</b>　末單的數量：<b style={{ color: C.ink }}>35 支付費</b>
+          ＋<b style={{ color: C.ink }}>5 支贈品</b>。沒有搭贈就只寫一個數字。<br />
+          <b style={{ color: C.ink }}>（平均 62.5）</b>　這條線歷次訂單的平均每批數量，單位同為 EA（含贈品）。<br />
+          <span style={{ color: C.ink3 }}>
+            拿末單量對平均看：<b style={{ color: C.ink2 }}>明顯少於平均</b>＝這次只訂半批，可能在試水溫或分單，可提早去；
+            <b style={{ color: C.ink2 }}>明顯多於平均</b>＝剛吃下大批貨，別急著推，先盯去化。
+          </span>
+        </div>
+
+        <div style={{ fontSize: 12, color: C.ink3, lineHeight: 1.85, marginTop: 11, borderTop: `1px solid ${C.hair}`, paddingTop: 9 }}>
+          EA ＝ 支／盒數（來源報表的數量單位），不是金額。
+          所有天數都已納入「接單」頁的補登，不只官方 Offtake。
         </div>
       </div>
 
