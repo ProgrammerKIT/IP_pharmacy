@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.1.5';
+const APP_VERSION = '2.2.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.2.0', '2026-09-20', '複盤頁新增「本月補回來的 N 條」：列出只看官方資料算為斷單警訊、但因截止日後接到單而解除的線。原本這些線只會從警訊清單靜靜消失，看不出拜訪或聯繫有沒有成效。同時把原「預測驗證」正名為「仍未解除的斷單警訊」'],
   ['2.1.5', '2026-09-20', '說明欄釐清兩件事：卡片右上角建議日取的是「一趟能收最多線」那天，未必等於警訊線的建議日（實測 8 家中 7 家相同、1 家不同）；效率區改寫為「建議日已過即代表估計庫存見底，去了是補單也是止血」，原文「不是救火」會低估'],
   ['2.1.4', '2026-09-20', '品項方塊的天數加上「距今」標籤（原為光禿的「81天」，與「訂單平均相隔」同為天數卻無標示，容易誤讀）；說明欄改列三個詞的差異'],
   ['2.1.3', '2026-09-20', '用詞統一：天數一律稱「訂單平均相隔」、數量一律稱「平均每批」——原本兩者都叫「平均」但單位不同（天 vs EA），容易混淆。說明欄加註兩詞差異'],
@@ -1119,6 +1120,27 @@ function Review({ log, onClear, onEdit, entries }) {
   /* 依「倍數」排序，不是逾期天數——天數沒有除掉各店本來的訂貨頻率。
      兩個多月訂一次的店逾 131 天只是剛過兩輪；半個月訂一次的店逾 60 天
      等於跳過三次半，後者才是真的不對勁。 */
+  /* 補登解除：同一條線，只用官方訂單算為警訊（≥2 倍），併入補登後降到 2 倍以下。
+     代表這條線是被截止日之後的訂單救回來的——那是這個月拜訪或聯繫的成果，
+     原本只會從警訊清單靜靜消失，看不出曾經發生過。 */
+  const cleared = GROUP_LIST.flatMap((d) => {
+    const withLive = allCadence(d.grp, entries);
+    const official = allCadence(d.grp, []);
+    return official.filter((o) => {
+      if (!o.ok || exempt(d.grp, o.item)) return false;
+      const g0 = (new Date(today) - new Date(o.last)) / 86400000;
+      if (!o.avg_int || g0 / o.avg_int < 2) return false;
+      const w = withLive.find((x) => x.item === o.item);
+      if (!w || !w.ok || w.last === o.last) return false;
+      const g1 = (new Date(today) - new Date(w.last)) / 86400000;
+      return g1 / w.avg_int < 2;
+    }).map((o) => ({
+      grp: d.grp, item: o.item,
+      wasLast: o.last, wasRatio: ((new Date(today) - new Date(o.last)) / 86400000) / o.avg_int,
+      nowLast: (withLive.find((x) => x.item === o.item) || {}).last,
+    }));
+  }).sort((a, b) => b.wasRatio - a.wasRatio);
+
   const allWarns = rawWarns.filter((w) => !exempt(w.grp, w.item))
     .sort((a, b) => b.ratio - a.ratio);
   const exWarns = rawWarns.filter((w) => exempt(w.grp, w.item));
@@ -1154,7 +1176,31 @@ function Review({ log, onClear, onEdit, entries }) {
       )}
 
       <div>
-        <SecHead n="1" t="預測驗證：下期回來對答案" />
+          {cleared.length > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <SecHead n="1" t={`本月補回來的 ${cleared.length} 條`} />
+              <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, marginBottom: 8 }}>
+                這些線<b style={{ color: C.ink }}>只看官方資料是斷單警訊</b>，因為你在截止日之後接到單，
+                現在已經降到門檻以下。原本它們只會從警訊清單消失，看不出曾經救回來過。
+              </div>
+              <div style={{ background: C.surf, border: `1px solid ${C.green}` }}>
+                {cleared.map((c) => (
+                  <div key={c.grp + c.item} style={{ padding: '10px 13px', borderBottom: `1px solid ${C.hair}` }}>
+                    <div className="flex items-baseline flex-wrap" style={{ gap: 8 }}>
+                      <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{c.grp}</span>
+                      <span style={{ fontFamily: SANS, fontSize: 13, color: C.ink2 }}>{c.item}</span>
+                      <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: C.green }}>已解除</span>
+                    </div>
+                    <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 2 }}>
+                      官方末單 {String(c.wasLast).slice(5)}（{c.wasRatio.toFixed(2)} 倍）
+                      → 補登 {String(c.nowLast).slice(5)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <SecHead n={cleared.length > 0 ? '2' : '1'} t="仍未解除的斷單警訊" />
         <div style={{ background: C.surf, border: `1px solid ${C.hair}` }}>
           {allWarns.map((w, i) => (
             <div key={i} className="flex justify-between items-baseline px-4 py-2" style={{ borderBottom: `1px solid ${C.hair}` }}>
