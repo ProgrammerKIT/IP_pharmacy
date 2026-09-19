@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.1.3';
+const APP_VERSION = '2.1.4';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.1.4', '2026-09-20', '品項方塊的天數加上「距今」標籤（原為光禿的「81天」，與「訂單平均相隔」同為天數卻無標示，容易誤讀）；說明欄改列三個詞的差異'],
   ['2.1.3', '2026-09-20', '用詞統一：天數一律稱「訂單平均相隔」、數量一律稱「平均每批」——原本兩者都叫「平均」但單位不同（天 vs EA），容易混淆。說明欄加註兩詞差異'],
   ['2.1.2', '2026-09-19', '手機閱讀優化：「單條線排程」84 條改為預設收合（整頁由約 10,400 字降到約 2,400 字）；摘要列改為 sticky，捲動時固定在頂部；滅火區警訊列改為品項與倍數同一行、細節縮次行，窄螢幕不再拆行'],
   ['2.1.1', '2026-09-19', '排程頁改為一眼可讀：頂部加摘要列（滅火幾家幾條、效率幾家、最急是誰）；算法與欄位說明改為預設收合（內容不刪）；效率區預設只列 5 家且明細收起，滅火區維持完整攤開'],
@@ -1299,7 +1300,7 @@ function LineChip({ x, dim }) {
       border: `1px ${dim ? 'dashed' : 'solid'} ${C.rule}`, background: dim ? 'transparent' : '#F4F8F9', padding: '3px 8px' }}>
       {x.item}
       <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 5 }}>
-        末單 {String(x.last).slice(5)} · {gapDays}天 · {qty} EA{avg ? `（平均每批 ${avg}）` : ''}
+        末單 {String(x.last).slice(5)} · 距今 {gapDays} 天 · {qty} EA{avg ? `（平均每批 ${avg}）` : ''}
       </span>
     </span>
   );
@@ -1478,14 +1479,15 @@ function Schedule({ entries }) {
 
         <div style={{ marginTop: 11, fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: C.ink }}>品項方塊</div>
         <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.ink, background: C.bg, border: `1px solid ${C.hair}`, padding: '7px 9px', marginTop: 5 }}>
-          Ultra MD　末單 07-01 · 80天 · 35+5 EA（平均每批 62.5）
+          Ultra MD　末單 07-01 · 距今 80 天 · 35+5 EA（平均每批 62.5）
         </div>
         <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.95, marginTop: 6 }}>
           <b style={{ color: C.ink }}>末單 07-01</b>　這條線最後一次下單的日期（月-日）。<br />
-          <b style={{ color: C.ink }}>80天</b>　從那天到今天的天數。<u>進門講話用這個</u>，客戶聽得懂。<br />
+          <b style={{ color: C.ink }}>距今 80 天</b>　從末單那天到今天過了幾天。<u>進門講話用這個</u>，客戶聽得懂。<br />
           <span style={{ color: C.ink3 }}>
-            注意兩個容易混的詞：<b style={{ color: C.ink2 }}>訂單平均相隔</b>＝兩次下單間隔幾<b>天</b>；
-            <b style={{ color: C.ink2 }}>平均每批</b>＝每次訂多少<b>支／盒</b>。單位不同。
+            三個容易混的詞：<b style={{ color: C.ink2 }}>距今 N 天</b>＝實際已經過了幾天；
+            <b style={{ color: C.ink2 }}>訂單平均相隔</b>＝這條線常態上多久訂一次（兩者都是天，一個是事實、一個是基準，
+            相除就是<b>倍數</b>）；<b style={{ color: C.ink2 }}>平均每批</b>＝每次訂多少<b>支／盒</b>，單位不同。
           </span><br />
           <b style={{ color: C.ink }}>35+5 EA</b>　末單的數量：<b style={{ color: C.ink }}>35 支付費</b>
           ＋<b style={{ color: C.ink }}>5 支贈品</b>。沒有搭贈就只寫一個數字。<br />
