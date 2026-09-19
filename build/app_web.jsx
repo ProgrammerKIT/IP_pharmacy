@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.4.0', '2026-09-20', '拜訪歷程由複盤頁搬至「拜訪前」頁底（查閱上次談什麼的直覺入口是這裡），預設收合；排程卡片的建議日若落在該月最後 7 天內，加註「近月底、提醒搭贈」'],
   ['2.3.0', '2026-09-20', '斷單判定改為 SOP 裁定 25 的規則 F：倍數 ≥1.5 且超過估計見底 ≥21 天，兩者同時成立才報（原為倍數 ≥2）。原規則會漏掉訂貨間隔長的客戶——平均 49 天的線要空 49 天才達標，那時多半已轉貨源。實測 84 條線由 9 條增為 17 條，未漏掉原規則抓到的任何一條。判定集中為單一函式 isStockout，五處共用'],
   ['2.2.0', '2026-09-20', '複盤頁新增「本月補回來的 N 條」：列出只看官方資料算為斷單警訊、但因截止日後接到單而解除的線。原本這些線只會從警訊清單靜靜消失，看不出拜訪或聯繫有沒有成效。同時把原「預測驗證」正名為「仍未解除的斷單警訊」'],
   ['2.1.5', '2026-09-20', '說明欄釐清兩件事：卡片右上角建議日取的是「一趟能收最多線」那天，未必等於警訊線的建議日（實測 8 家中 7 家相同、1 家不同）；效率區改寫為「建議日已過即代表估計庫存見底，去了是補單也是止血」，原文「不是救火」會低估'],
@@ -567,7 +568,98 @@ function PendingBlock({ log, onGo }) {
 }
 
 /* ── 畫面一：拜訪優先序 ───────────────────────────────── */
-function PrepList({ onPick, entries, log }) {
+/* 拜訪歷程：2026/09/20 由複盤頁搬來。Kit 回報查閱歷程時直覺會來「拜訪前」，
+   而非切到複盤——讀（查上次談什麼）和複盤（看成效）是兩件事，分開放。 */
+function VisitHistory({ log, onClear, onEdit }) {
+  const [openId, setOpenId] = useState(null);
+  const [histGrp, setHistGrp] = useState('全部');
+  const [show, setShow] = useState(false);
+  if (!log.length) return null;
+  return (
+    <div style={{ marginTop: 20 }}>
+      <button onClick={() => setShow(!show)}
+        style={{ width: '100%', textAlign: 'left', background: C.surf, border: `1px solid ${C.hair}`,
+          padding: '11px 14px', fontFamily: SANS, fontSize: 13, color: C.teal }}>
+        {show ? '▾ 收起拜訪歷程' : `▸ 拜訪歷程 ${log.length} 筆 · 查上次跟這家談了什麼`}
+      </button>
+      {show && (
+        <div style={{ marginTop: 10 }}>
+          {(() => {
+            const grps = ['全部', ...Array.from(new Set(log.map((v) => v.grp)))];
+            return grps.length > 2 ? (
+              <div className="flex flex-wrap" style={{ gap: 6, marginBottom: 10 }}>
+                {grps.map((g) => (
+                  <button key={g} onClick={() => { setHistGrp(g); setOpenId(null); }}
+                    style={{ fontFamily: SANS, fontSize: 12, padding: '5px 11px', background: histGrp === g ? C.teal : C.surf,
+                      color: histGrp === g ? '#fff' : C.ink2, border: `1px solid ${histGrp === g ? C.teal : C.rule}` }}>
+                    {g}{g !== '全部' && ` ${log.filter((v) => v.grp === g).length}`}
+                  </button>
+                ))}
+              </div>
+            ) : null;
+          })()}
+          <div style={{ display: 'grid', gap: 8 }}>
+            {[...log].filter((v) => histGrp === '全部' || v.grp === histGrp)
+              .sort((a, b) => (a.date < b.date ? 1 : -1)).map((v) => (
+              <div key={v.id} style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '10px 14px' }}>
+                <div className="flex justify-between items-baseline">
+                  <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, color: C.ink }}>{v.grp}</span>
+                  <Num size={11} color={C.ink3}>{v.date}</Num>
+                </div>
+                <div className="flex flex-wrap" style={{ gap: 6, marginTop: 7 }}>
+                  {v.topics.map((t, i) => (
+                    <span key={i} style={{ fontFamily: MONO, fontSize: 10, color: RES_C[t.result], border: `1px solid ${RES_C[t.result]}`, padding: '2px 6px' }}>
+                      {(t.kind || '拿單') === '查證' ? '查·' : '單·'}{t.result}
+                    </span>
+                  ))}
+                </div>
+                {v.next && <div style={{ fontSize: 12, color: C.ink2, marginTop: 7 }}>下次追蹤 <Num size={11}>{v.next}</Num></div>}
+
+                {openId === v.id && (
+                  <div style={{ borderTop: `1px solid ${C.hair}`, marginTop: 10, paddingTop: 10, display: 'grid', gap: 12 }}>
+                    {v.topics.map((t, i) => (
+                      <div key={i}>
+                        <div style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: C.ink, lineHeight: 1.5 }}>
+                          <span style={{ fontFamily: MONO, fontSize: 10, color: RES_C[t.result], border: `1px solid ${RES_C[t.result]}`, padding: '1px 5px', marginRight: 7 }}>
+                            {(t.kind || '拿單') === '查證' ? '查' : '單'}·{t.result}
+                          </span>
+                          {t.title}
+                        </div>
+                        {t.note && t.note.trim()
+                          ? <div style={{ fontSize: 13, color: C.ink2, lineHeight: 1.85, marginTop: 5, whiteSpace: 'pre-wrap' }}>{t.note.trim()}</div>
+                          : <div style={{ fontSize: 12, color: C.ink3, marginTop: 5 }}>（沒有留下備註）</div>}
+                      </div>
+                    ))}
+                    {v.intel && v.intel.trim() && (
+                      <div style={{ background: C.bg, border: `1px solid ${C.hair}`, padding: '10px 12px' }}>
+                        <Eyebrow>新情報</Eyebrow>
+                        <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.85, marginTop: 5, whiteSpace: 'pre-wrap' }}>{v.intel.trim()}</div>
+                      </div>
+                    )}
+                    {v.source && <Num size={10} color={C.ink3}>來源：{v.source}</Num>}
+                  </div>
+                )}
+
+                <div className="flex items-center" style={{ gap: 14, marginTop: 9 }}>
+                  <button onClick={() => setOpenId(openId === v.id ? null : v.id)}
+                    style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: openId === v.id ? C.ink2 : C.teal,
+                      border: `1px solid ${C.rule}`, padding: '5px 12px', background: C.surf }}>
+                    {openId === v.id ? '收合' : '展開閱讀'}
+                  </button>
+                  <button onClick={() => onEdit(v)} style={{ fontFamily: SANS, fontSize: 12.5, color: C.teal, border: `1px solid ${C.rule}`, padding: '5px 12px', background: C.surf }}>編輯</button>
+                  {v.updatedAt && <Num size={10} color={C.ink3}>已於 {v.updatedAt.slice(0, 10)} 修改</Num>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <button onClick={onClear} style={{ fontFamily: SANS, fontSize: 12, color: C.red, marginTop: 12 }}>清除全部紀錄</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrepList({ onPick, entries, log, onClear, onEdit }) {
   return (
     <div>
       <div className="px-4 pt-5 pb-3">
@@ -647,6 +739,9 @@ function PrepList({ onPick, entries, log }) {
           </button>
         );
       })}
+      <div className="px-4 pb-5">
+        <VisitHistory log={log} onClear={onClear} onEdit={onEdit} />
+      </div>
     </div>
   );
 }
@@ -1104,8 +1199,6 @@ function LogForm({ grp, existing, onSave, onCancel, onDelete, allEntries }) {
 
 /* ── 畫面四：複盤迭代 ─────────────────────────────────── */
 function Review({ log, onClear, onEdit, entries }) {
-  const [openId, setOpenId] = useState(null);      // 展開閱讀的紀錄 id（唯讀，不進編輯表單）
-  const [histGrp, setHistGrp] = useState('全部');   // 拜訪歷程的客戶篩選
   const all = log.flatMap((v) => v.topics);
   const scored = all.map((t) => ({ ...t, sc: scoreOf(t.kind || '拿單', t.result) })).filter((t) => t.sc !== null);
   const ordL = scored.filter((t) => (t.kind || '拿單') !== '查證');
@@ -1258,80 +1351,6 @@ function Review({ log, onClear, onEdit, entries }) {
         )}
       </div>
 
-      {log.length > 0 && (
-        <div>
-          <SecHead n="3" t={`拜訪歷程 ${log.length} 筆 · 點卡片展開閱讀`} />
-          {(() => {
-            const grps = ['全部', ...Array.from(new Set(log.map((v) => v.grp)))];
-            return grps.length > 2 ? (
-              <div className="flex flex-wrap" style={{ gap: 6, marginBottom: 10 }}>
-                {grps.map((g) => (
-                  <button key={g} onClick={() => { setHistGrp(g); setOpenId(null); }}
-                    style={{ fontFamily: SANS, fontSize: 12, padding: '5px 11px', background: histGrp === g ? C.teal : C.surf,
-                      color: histGrp === g ? '#fff' : C.ink2, border: `1px solid ${histGrp === g ? C.teal : C.rule}` }}>
-                    {g}{g !== '全部' && ` ${log.filter((v) => v.grp === g).length}`}
-                  </button>
-                ))}
-              </div>
-            ) : null;
-          })()}
-          <div style={{ display: 'grid', gap: 8 }}>
-            {[...log].filter((v) => histGrp === '全部' || v.grp === histGrp)
-              .sort((a, b) => (a.date < b.date ? 1 : -1)).map((v) => (
-              <div key={v.id} style={{ background: C.surf, border: `1px solid ${C.hair}`, padding: '10px 14px' }}>
-                <div className="flex justify-between items-baseline">
-                  <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, color: C.ink }}>{v.grp}</span>
-                  <Num size={11} color={C.ink3}>{v.date}</Num>
-                </div>
-                <div className="flex flex-wrap" style={{ gap: 6, marginTop: 7 }}>
-                  {v.topics.map((t, i) => (
-                    <span key={i} style={{ fontFamily: MONO, fontSize: 10, color: RES_C[t.result], border: `1px solid ${RES_C[t.result]}`, padding: '2px 6px' }}>
-                      {(t.kind || '拿單') === '查證' ? '查·' : '單·'}{t.result}
-                    </span>
-                  ))}
-                </div>
-                {v.next && <div style={{ fontSize: 12, color: C.ink2, marginTop: 7 }}>下次追蹤 <Num size={11}>{v.next}</Num></div>}
-
-                {openId === v.id && (
-                  <div style={{ borderTop: `1px solid ${C.hair}`, marginTop: 10, paddingTop: 10, display: 'grid', gap: 12 }}>
-                    {v.topics.map((t, i) => (
-                      <div key={i}>
-                        <div style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: C.ink, lineHeight: 1.5 }}>
-                          <span style={{ fontFamily: MONO, fontSize: 10, color: RES_C[t.result], border: `1px solid ${RES_C[t.result]}`, padding: '1px 5px', marginRight: 7 }}>
-                            {(t.kind || '拿單') === '查證' ? '查' : '單'}·{t.result}
-                          </span>
-                          {t.title}
-                        </div>
-                        {t.note && t.note.trim()
-                          ? <div style={{ fontSize: 13, color: C.ink2, lineHeight: 1.85, marginTop: 5, whiteSpace: 'pre-wrap' }}>{t.note.trim()}</div>
-                          : <div style={{ fontSize: 12, color: C.ink3, marginTop: 5 }}>（沒有留下備註）</div>}
-                      </div>
-                    ))}
-                    {v.intel && v.intel.trim() && (
-                      <div style={{ background: C.bg, border: `1px solid ${C.hair}`, padding: '10px 12px' }}>
-                        <Eyebrow>新情報</Eyebrow>
-                        <div style={{ fontSize: 13, color: C.ink, lineHeight: 1.85, marginTop: 5, whiteSpace: 'pre-wrap' }}>{v.intel.trim()}</div>
-                      </div>
-                    )}
-                    {v.source && <Num size={10} color={C.ink3}>來源：{v.source}</Num>}
-                  </div>
-                )}
-
-                <div className="flex items-center" style={{ gap: 14, marginTop: 9 }}>
-                  <button onClick={() => setOpenId(openId === v.id ? null : v.id)}
-                    style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 700, color: openId === v.id ? C.ink2 : C.teal,
-                      border: `1px solid ${C.rule}`, padding: '5px 12px', background: C.surf }}>
-                    {openId === v.id ? '收合' : '展開閱讀'}
-                  </button>
-                  <button onClick={() => onEdit(v)} style={{ fontFamily: SANS, fontSize: 12.5, color: C.teal, border: `1px solid ${C.rule}`, padding: '5px 12px', background: C.surf }}>編輯</button>
-                  {v.updatedAt && <Num size={10} color={C.ink3}>已於 {v.updatedAt.slice(0, 10)} 修改</Num>}
-                </div>
-              </div>
-            ))}
-          </div>
-          <button onClick={onClear} style={{ fontFamily: SANS, fontSize: 12, color: C.red, marginTop: 12 }}>清除全部紀錄</button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1368,6 +1387,18 @@ function LineChip({ x, dim }) {
   );
 }
 
+/* 月底提醒：建議日落在該月最後 7 天內（月末日 − 建議日 ≤ 7）時加註。
+   例：7 月末日 31，建議日 7/24 → 31−24=7，符合。搭贈活動多半按月結算，
+   月底前去才趕得上當月檔期。（2026/09/20 Kit 指定。） */
+const MONTH_END_WINDOW = 7;
+function nearMonthEnd(ymd) {
+  if (!ymd) return false;
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  if (!y || !m || !d) return false;
+  const lastDay = new Date(y, m, 0).getDate();
+  return (lastDay - d) <= MONTH_END_WINDOW;
+}
+
 function StoreCard({ st, days, fire, compact }) {
   const [open, setOpen] = useState(false);
   const od = days(st.date);
@@ -1389,6 +1420,11 @@ function StoreCard({ st, days, fire, compact }) {
           <Num size={10.5} color={C.ink3}>建議 </Num>
           <Num size={13} color={od > 0 ? C.red : C.ink} weight={600}>{st.date}</Num>
           <Num size={10.5} color={C.ink3}>{od > 0 ? `　逾 ${od} 天` : `　還有 ${-od} 天`}</Num>
+          {nearMonthEnd(st.date) && (
+            <span style={{ fontFamily: SANS, fontSize: 10.5, color: '#fff', background: C.amber, padding: '2px 6px', marginLeft: 6 }}>
+              近月底、提醒搭贈
+            </span>
+          )}
         </span>
       </div>
       {fire && (
@@ -2550,7 +2586,7 @@ function Main({ ds, setDs }) {
           <LogForm grp={logGrp} existing={editing} onSave={saveVisit} onDelete={deleteVisit} allEntries={entries}
             onCancel={() => { setLogGrp(null); setEditing(null); }} />
         ) : tab === 'prep' ? (
-          sel ? <Card grp={sel} onBack={() => setSel(null)} onLog={(g) => setLogGrp(g)} entries={entries} /> : <PrepList onPick={setSel} entries={entries} log={log} />
+          sel ? <Card grp={sel} onBack={() => setSel(null)} onLog={(g) => setLogGrp(g)} entries={entries} /> : <PrepList onPick={setSel} entries={entries} log={log} onClear={() => persist([])} onEdit={(v) => { setEditing(v); setLogGrp(v.grp); setTab('review'); }} />
         ) : tab === 'entry' ? (
           <EntryScreen entries={entries} onSave={(e) => persist(log, e)} grps={ALL_GRPS} />
         ) : tab === 'review' ? (
