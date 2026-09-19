@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.5.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.5.0', '2026-09-20', '客戶卡議題顯示進度：若該議題在拜訪紀錄中出現過同名者，帶出最近一次的日期、結果與備註。已談出結果的標綠、仍「沒談到」的標灰並提示這次要談。原本劇本與紀錄各自獨立，已談完的議題會被重問、已推進的當成沒發生（案例：建祥 7/29 已問到 175 盒去化、已提 409 條件，卡片仍列為待談）'],
   ['2.4.1', '2026-09-20', '複盤頁「本月補回來的 N 條」改為收合式：預設一列（大數字＋一句說明＋「看是哪幾條」），點開才列逐條。逐條改為左側綠邊卡片、資訊壓成一行「N 倍（末單 MM-DD）→ MM-DD 補回」，窄螢幕不拆行'],
   ['2.4.0', '2026-09-20', '拜訪歷程由複盤頁搬至「拜訪前」頁底（查閱上次談什麼的直覺入口是這裡），預設收合；排程卡片的建議日若落在該月最後 7 天內，加註「近月底、提醒搭贈」'],
   ['2.3.0', '2026-09-20', '斷單判定改為 SOP 裁定 25 的規則 F：倍數 ≥1.5 且超過估計見底 ≥21 天，兩者同時成立才報（原為倍數 ≥2）。原規則會漏掉訂貨間隔長的客戶——平均 49 天的線要空 49 天才達標，那時多半已轉貨源。實測 84 條線由 9 條增為 17 條，未漏掉原規則抓到的任何一條。判定集中為單一函式 isStockout，五處共用'],
@@ -805,9 +806,23 @@ function DualBlock({ grp, entries }) {
 }
 
 /* ── 畫面二：客戶卡 ───────────────────────────────────── */
-function Card({ grp, onBack, onLog, entries }) {
+function Card({ grp, onBack, onLog, entries, log }) {
   const d = DATA[grp];
   const hand = PLAY[grp];
+  /* 議題進度：劇本與拜訪紀錄是兩份獨立資料，沒有連結時已談完的議題會被重問。
+     以議題標題同名比對，把最近一次的結果帶出來。標題改寫後自然就對不上，
+     那代表劇本已更新、該題是新的——這正是我們要的行為。（2026/09/20） */
+  const topicDone = (title) => {
+    let best = null;
+    (log || []).forEach((v) => {
+      if (v.grp !== grp) return;
+      (v.topics || []).forEach((t) => {
+        if (t.title !== title) return;
+        if (!best || v.date > best.date) best = { date: v.date, result: t.result, note: t.note };
+      });
+    });
+    return best;
+  };
   const auto = hand ? null : autoTopics(grp, entries);
   const p = hand || { redlines: [], topics: auto, bring: [], intel: [] };
   const mine = liveEntries(entries).filter((e) => e.grp === grp).sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -877,6 +892,26 @@ function Card({ grp, onBack, onLog, entries }) {
                   <div style={{ fontFamily: SANS, fontSize: 15, fontWeight: 700, color: C.ink, lineHeight: 1.5 }}>{t.t}</div>
                 </div>
                 <div style={{ fontSize: 13, color: C.ink2, lineHeight: 1.8, marginTop: 6, paddingLeft: 20 }}>{t.d}</div>
+                {(() => {
+                  const done = topicDone(t.t);
+                  if (!done) return null;
+                  const hit = done.result === '獲得資訊' || done.result === '拿到單' || done.result === '口頭承諾';
+                  return (
+                    <div style={{ marginLeft: 20, marginTop: 7,
+                      background: hit ? C.greenBg : '#F4F7F8',
+                      border: `1px solid ${hit ? '#C4DCCF' : C.rule}`, padding: '7px 10px' }}>
+                      <div style={{ fontSize: 12.5, color: hit ? '#1E4D39' : C.ink2, lineHeight: 1.7 }}>
+                        <b>{String(done.date).slice(5)} 談過：{done.result}</b>
+                        {!hit && <span style={{ color: C.ink3 }}>　這題還沒解決，這次要談</span>}
+                      </div>
+                      {done.note && done.note.trim() && (
+                        <div style={{ fontSize: 12, color: C.ink2, lineHeight: 1.75, marginTop: 4, whiteSpace: 'pre-wrap' }}>
+                          {done.note.trim()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {Object.keys(addBy).filter((it) => t.t.includes(it) || t.d.includes(it)).map((it) => (
                   <div key={it} style={{ marginLeft: 20, marginTop: 7, background: C.greenBg, border: `1px solid #C4DCCF`, padding: '7px 10px', fontSize: 12.5, color: '#1E4D39', lineHeight: 1.7 }}>
                     <b>{it} 已有補登</b>：{cutLabel()} 後 +{addBy[it].paid} EA{addBy[it].gift ? `（另贈 ${addBy[it].gift}）` : ''}。這條議題的前提可能已改變，進門前先確認。
@@ -2611,7 +2646,7 @@ function Main({ ds, setDs }) {
           <LogForm grp={logGrp} existing={editing} onSave={saveVisit} onDelete={deleteVisit} allEntries={entries}
             onCancel={() => { setLogGrp(null); setEditing(null); }} />
         ) : tab === 'prep' ? (
-          sel ? <Card grp={sel} onBack={() => setSel(null)} onLog={(g) => setLogGrp(g)} entries={entries} /> : <PrepList onPick={setSel} entries={entries} log={log} onClear={() => persist([])} onEdit={(v) => { setEditing(v); setLogGrp(v.grp); setTab('review'); }} />
+          sel ? <Card grp={sel} onBack={() => setSel(null)} onLog={(g) => setLogGrp(g)} entries={entries} log={log} /> : <PrepList onPick={setSel} entries={entries} log={log} onClear={() => persist([])} onEdit={(v) => { setEditing(v); setLogGrp(v.grp); setTab('review'); }} />
         ) : tab === 'entry' ? (
           <EntryScreen entries={entries} onSave={(e) => persist(log, e)} grps={ALL_GRPS} />
         ) : tab === 'review' ? (
