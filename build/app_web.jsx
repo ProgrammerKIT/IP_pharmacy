@@ -80,8 +80,8 @@ function autoTopics(grp, entries) {
   allCadence(grp, entries).forEach((c) => {
     if (exempt(grp, c.item) || !c.ok) return;
     const gap = Math.round((new Date(TODAY_STR()) - new Date(c.last)) / 86400000);
-    if (gap >= c.avg_int * 2) out.push({ pri: 1, kind: '查證',
-      t: `${c.item} 已 ${gap} 天沒訂`, d: `訂單平均相隔 ${c.avg_int} 天，已達 ${(gap / c.avg_int).toFixed(1)} 倍。問是賣不動、被競品接走，還是採購節奏改了。` });
+    if (isStockout(c, gap)) out.push({ pri: 1, kind: '查證',
+      t: `${c.item} 已 ${gap} 天沒訂`, d: `訂單平均相隔 ${c.avg_int} 天，已達 ${(gap / c.avg_int).toFixed(1)} 倍、超過估計見底 ${Math.round(gap - c.avg_int)} 天。問是賣不動、被競品接走，還是採購節奏改了。` });
   });
   (d.zero || []).forEach((z) => {
     if (exempt(grp, z.item)) return;
@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.3.0', '2026-09-20', '斷單判定改為 SOP 裁定 25 的規則 F：倍數 ≥1.5 且超過估計見底 ≥21 天，兩者同時成立才報（原為倍數 ≥2）。原規則會漏掉訂貨間隔長的客戶——平均 49 天的線要空 49 天才達標，那時多半已轉貨源。實測 84 條線由 9 條增為 17 條，未漏掉原規則抓到的任何一條。判定集中為單一函式 isStockout，五處共用'],
   ['2.2.0', '2026-09-20', '複盤頁新增「本月補回來的 N 條」：列出只看官方資料算為斷單警訊、但因截止日後接到單而解除的線。原本這些線只會從警訊清單靜靜消失，看不出拜訪或聯繫有沒有成效。同時把原「預測驗證」正名為「仍未解除的斷單警訊」'],
   ['2.1.5', '2026-09-20', '說明欄釐清兩件事：卡片右上角建議日取的是「一趟能收最多線」那天，未必等於警訊線的建議日（實測 8 家中 7 家相同、1 家不同）；效率區改寫為「建議日已過即代表估計庫存見底，去了是補單也是止血」，原文「不是救火」會低估'],
   ['2.1.4', '2026-09-20', '品項方塊的天數加上「距今」標籤（原為光禿的「81天」，與「訂單平均相隔」同為天數卻無標示，容易誤讀）；說明欄改列三個詞的差異'],
@@ -349,6 +350,20 @@ function cadence(grp, item, entries) {
     sig: Math.abs(diff) <= 10 ? '穩定' : (diff > 10 ? '剛進大批' : '訂得比平常少'),
   };
 }
+
+/* 斷單判定（SOP 裁定 25，2026/09/20 Kit 裁定，取代原「倍數 ≥2」）
+   規則 F：倍數 ≥ 1.5 **且** 超過估計見底 ≥ 21 天，兩者須同時成立。
+     · 倍數 ＝ 距末單天數 ÷ 訂單平均相隔（相對：這家自己的節奏亂了沒）
+     · 超過見底 ＝ 距末單天數 − 訂單平均相隔（絕對：架上大概空了幾天）
+   單用倍數：訂得疏的店要等很久才達標（平均 49 天的線要空 49 天才到 2 倍），會漏掉慢節奏客戶。
+   單用超過見底：對訂得勤的店太敏感（平均 17 天的線延一輪多就報警）。
+   兩者同時成立才報，實測 84 條線命中 17 條（20%），且未漏掉原 2 倍規則抓到的任何一條。 */
+const WARN_RATIO = 1.5;
+const WARN_PAST_DAYS = 21;
+const isStockout = (c, gapDays) => {
+  if (!c.avg_int) return false;
+  return (gapDays / c.avg_int) >= WARN_RATIO && (gapDays - c.avg_int) >= WARN_PAST_DAYS;
+};
 
 const allCadence = (grp, entries) => {
   const items = new Set([
@@ -716,7 +731,7 @@ function Card({ grp, onBack, onLog, entries }) {
   const warns = allCadence(grp, entries).filter((c) => {
     if (!c.ok) return false;
     const gap = (new Date(TODAY_STR()) - new Date(c.last)) / 86400000;
-    return gap >= c.avg_int * 2;
+    return isStockout(c, gap);
   }).map((c) => ({ item: c.item, avg: c.avg_int, gap: Math.round((new Date(TODAY_STR()) - new Date(c.last)) / 86400000) }));
   const actWarns = warns.filter((f) => !exempt(grp, f.item));
   const actZero = d.zero.filter((z) => !exempt(grp, z.item));
@@ -1111,7 +1126,7 @@ function Review({ log, onClear, onEdit, entries }) {
   const rawWarns = GROUP_LIST.flatMap((d) =>
     allCadence(d.grp, entries).filter((c) => {
       if (!c.ok) return false;
-      return (new Date(today) - new Date(c.last)) / 86400000 >= c.avg_int * 2;
+      return isStockout(c, (new Date(today) - new Date(c.last)) / 86400000);
     }).map((c) => {
       const gap = Math.round((new Date(today) - new Date(c.last)) / 86400000);
       return { grp: d.grp, item: c.item, avg: c.avg_int, gap, ratio: c.avg_int ? gap / c.avg_int : 0 };
@@ -1129,11 +1144,11 @@ function Review({ log, onClear, onEdit, entries }) {
     return official.filter((o) => {
       if (!o.ok || exempt(d.grp, o.item)) return false;
       const g0 = (new Date(today) - new Date(o.last)) / 86400000;
-      if (!o.avg_int || g0 / o.avg_int < 2) return false;
+      if (!isStockout(o, g0)) return false;
       const w = withLive.find((x) => x.item === o.item);
       if (!w || !w.ok || w.last === o.last) return false;
       const g1 = (new Date(today) - new Date(w.last)) / 86400000;
-      return g1 / w.avg_int < 2;
+      return !isStockout(w, g1);
     }).map((o) => ({
       grp: d.grp, item: o.item,
       wasLast: o.last, wasRatio: ((new Date(today) - new Date(o.last)) / 86400000) / o.avg_int,
@@ -1460,7 +1475,7 @@ function Schedule({ entries }) {
     const miss = lines.filter((x) => !best.hit.includes(x)).sort((a, b) => (a.d_int < b.d_int ? -1 : 1));
     const warns = lines.filter((x) => {
       const gap = (new Date(TODAY_STR()) - new Date(x.last)) / 86400000;
-      return x.avg_int && gap / x.avg_int >= 2;
+      return isStockout(x, gap);
     }).map((x) => ({ ...x, wr: ((new Date(TODAY_STR()) - new Date(x.last)) / 86400000) / x.avg_int }))
       .sort((a, b) => b.wr - a.wr);
     return { grp, lines, date: best.date, hit: best.hit, miss, rate: best.hit.length / lines.length,
@@ -1561,9 +1576,14 @@ function Schedule({ entries }) {
             同一家有多條線同時斷，問題通常比單線更深。<br />
             <b style={{ color: C.ink }}>② 效率排程</b>（無警訊的店）：依<b style={{ color: C.ink }}>一趟收得完的比率</b>高的優先，
             比率相同再比建議日早的。<br />
-            <b style={{ color: C.ink }}>倍數</b>＝距末單天數 ÷ 該線訂單平均相隔。達 <b style={{ color: C.ink }}>2 倍</b>即列為斷單警訊。
-            用倍數不用天數，因為天數沒有除掉各店本來的訂貨頻率：兩個月訂一次的店逾 131 天只是剛過兩輪，
-            半個月訂一次的店逾 60 天等於跳過三次半。
+            <b style={{ color: C.ink }}>斷單警訊的判定（SOP 裁定 25）</b>：
+            <b style={{ color: C.ink }}>倍數 ≥ 1.5</b> <u>且</u> <b style={{ color: C.ink }}>超過估計見底 ≥ 21 天</b>，兩者同時成立才報。<br />
+            <span style={{ color: C.ink3 }}>
+              倍數＝距末單天數 ÷ 訂單平均相隔，看的是<b style={{ color: C.ink2 }}>這家自己的節奏亂了沒</b>；
+              超過見底＝距末單天數 − 訂單平均相隔，看的是<b style={{ color: C.ink2 }}>架上大概空了幾天</b>。
+              只用倍數會漏掉訂得疏的店（平均 49 天的線要空 49 天才到 2 倍）；
+              只用天數對訂得勤的店太敏感。兩者都要才報。
+            </span>
           </div>
         </div>
 
