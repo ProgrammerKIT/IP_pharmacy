@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.4.1', '2026-09-20', '複盤頁「本月補回來的 N 條」改為收合式：預設一列（大數字＋一句說明＋「看是哪幾條」），點開才列逐條。逐條改為左側綠邊卡片、資訊壓成一行「N 倍（末單 MM-DD）→ MM-DD 補回」，窄螢幕不拆行'],
   ['2.4.0', '2026-09-20', '拜訪歷程由複盤頁搬至「拜訪前」頁底（查閱上次談什麼的直覺入口是這裡），預設收合；排程卡片的建議日若落在該月最後 7 天內，加註「近月底、提醒搭贈」'],
   ['2.3.0', '2026-09-20', '斷單判定改為 SOP 裁定 25 的規則 F：倍數 ≥1.5 且超過估計見底 ≥21 天，兩者同時成立才報（原為倍數 ≥2）。原規則會漏掉訂貨間隔長的客戶——平均 49 天的線要空 49 天才達標，那時多半已轉貨源。實測 84 條線由 9 條增為 17 條，未漏掉原規則抓到的任何一條。判定集中為單一函式 isStockout，五處共用'],
   ['2.2.0', '2026-09-20', '複盤頁新增「本月補回來的 N 條」：列出只看官方資料算為斷單警訊、但因截止日後接到單而解除的線。原本這些線只會從警訊清單靜靜消失，看不出拜訪或聯繫有沒有成效。同時把原「預測驗證」正名為「仍未解除的斷單警訊」'],
@@ -1199,6 +1200,7 @@ function LogForm({ grp, existing, onSave, onCancel, onDelete, allEntries }) {
 
 /* ── 畫面四：複盤迭代 ─────────────────────────────────── */
 function Review({ log, onClear, onEdit, entries }) {
+  const [showCleared, setShowCleared] = useState(false);
   const all = log.flatMap((v) => v.topics);
   const scored = all.map((t) => ({ ...t, sc: scoreOf(t.kind || '拿單', t.result) })).filter((t) => t.sc !== null);
   const ordL = scored.filter((t) => (t.kind || '拿單') !== '查證');
@@ -1286,26 +1288,49 @@ function Review({ log, onClear, onEdit, entries }) {
       <div>
           {cleared.length > 0 && (
             <div style={{ marginBottom: 18 }}>
-              <SecHead n="1" t={`本月補回來的 ${cleared.length} 條`} />
-              <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, marginBottom: 8 }}>
-                這些線<b style={{ color: C.ink }}>只看官方資料是斷單警訊</b>，因為你在截止日之後接到單，
-                現在已經降到門檻以下。原本它們只會從警訊清單消失，看不出曾經救回來過。
-              </div>
-              <div style={{ background: C.surf, border: `1px solid ${C.green}` }}>
-                {cleared.map((c) => (
-                  <div key={c.grp + c.item} style={{ padding: '10px 13px', borderBottom: `1px solid ${C.hair}` }}>
-                    <div className="flex items-baseline flex-wrap" style={{ gap: 8 }}>
-                      <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{c.grp}</span>
-                      <span style={{ fontFamily: SANS, fontSize: 13, color: C.ink2 }}>{c.item}</span>
-                      <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11.5, color: C.green }}>已解除</span>
+              {/* 收合式成績單。手機上預設只佔一列，點開才看逐條。
+                  綠色＝正面訊號，和滅火區的琥珀／紅色區隔開。 */}
+              <button onClick={() => setShowCleared(!showCleared)}
+                style={{ width: '100%', textAlign: 'left', background: showCleared ? C.greenBg : C.surf,
+                  border: `1.5px solid ${C.green}`, padding: '12px 14px' }}>
+                <div className="flex items-center" style={{ gap: 10 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 22, fontWeight: 600, color: C.green, lineHeight: 1 }}>
+                    {cleared.length}
+                  </span>
+                  <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, color: C.ink }}>
+                    條本月補回來了
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontFamily: SANS, fontSize: 12, color: C.teal }}>
+                    {showCleared ? '收起' : '看是哪幾條'}
+                  </span>
+                </div>
+                <div style={{ fontFamily: SANS, fontSize: 11.5, color: C.ink2, lineHeight: 1.7, marginTop: 5 }}>
+                  這些線只看官方資料是斷單警訊，因為你在截止日後接到單而解除。
+                </div>
+              </button>
+
+              {showCleared && (
+                <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  {cleared.map((c) => (
+                    <div key={c.grp + c.item}
+                      style={{ background: C.surf, borderLeft: `3px solid ${C.green}`,
+                        border: `1px solid ${C.hair}`, borderLeftWidth: 3, borderLeftColor: C.green, padding: '9px 12px' }}>
+                      <div className="flex items-baseline" style={{ gap: 7 }}>
+                        <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{c.grp}</span>
+                        <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>{c.item}</span>
+                        <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: C.green }}>✓</span>
+                      </div>
+                      {/* 一行講完：原本斷多久 → 幾號補回來。不拆行、不超出螢幕。 */}
+                      <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 3 }}>
+                        <span style={{ color: C.red }}>{c.wasRatio.toFixed(1)} 倍</span>
+                        <span style={{ color: C.ink3 }}>（末單 {String(c.wasLast).slice(5)}）</span>
+                        <span style={{ color: C.ink3, margin: '0 5px' }}>→</span>
+                        <span style={{ color: C.green }}>{String(c.nowLast).slice(5)} 補回</span>
+                      </div>
                     </div>
-                    <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 2 }}>
-                      官方末單 {String(c.wasLast).slice(5)}（{c.wasRatio.toFixed(2)} 倍）
-                      → 補登 {String(c.nowLast).slice(5)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <SecHead n={cleared.length > 0 ? '2' : '1'} t="仍未解除的斷單警訊" />
