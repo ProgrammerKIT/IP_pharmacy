@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.7.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.7.0', '2026-09-20', '排程卡片版面合併：原本警訊另開琥珀框、線況另列灰底方塊，同一條線的品項名與末單日重複出現，而「該問什麼」引用的批量又在另一區。改為一條線一列，數字只出現一次；倍數改以算式呈現（N 天沒訂 ÷ 常態 M 天 = X 倍），分子分母商同行。警訊狀態改標在該列上，不再依分組決定，避免警訊線落在「還沒熟」那組時漏顯示'],
   ['2.6.0', '2026-09-20', '斷單警訊直接給出「該問什麼」：依末批量÷平均每批推導談法——吃了大批的問去化（別問怎麼沒訂，會被回還有貨）、正常批量卻停的直接問原因、新導入線點出第二輪沒接上最易永久流失、上次就訂得少的問是不是分單或試水溫。原本只給數字，使用者得自己比對才看得出差別'],
   ['2.5.1', '2026-09-20', '資料頁顯示資料檔建置時間：程式有版號可自動比對並提示更新，資料檔沒有，原本只能靠翻客戶卡內容猜匯入的是哪一份'],
   ['2.5.0', '2026-09-20', '客戶卡議題顯示進度：若該議題在拜訪紀錄中出現過同名者，帶出最近一次的日期、結果與備註。已談出結果的標綠、仍「沒談到」的標灰並提示這次要談。原本劇本與紀錄各自獨立，已談完的議題會被重問、已推進的當成沒發生（案例：建祥 7/29 已問到 175 盒去化、已提 409 條件，卡片仍列為待談）'],
@@ -1466,16 +1467,45 @@ function lastInfo(x) {
   return { gapDays, qty, avg };
 }
 
-function LineChip({ x, dim }) {
+/* 一條線一列。原本警訊另開琥珀框、線況另列灰底方塊，同一條線的品項名與末單日
+   出現兩次，而「該問什麼」引用的批量數字又在另一區，得上下對照才讀得完整。
+   併成一列後數字只出現一次，算式與依據放在一起。（2026/09/20）
+   注意：警訊線不保證落在「一趟收」那組（建議日可能離主日期太遠而歸入「還沒熟」），
+   故每條線都渲染、警訊狀態標在該列上，不以分組決定是否顯示警訊。 */
+function LineRow({ x, warn, dim }) {
   const { gapDays, qty, avg } = lastInfo(x);
+  const a = warn ? askWhat(x, warn.isNew) : null;
   return (
-    <span style={{ fontFamily: SANS, fontSize: 12, color: dim ? C.ink3 : C.ink,
-      border: `1px ${dim ? 'dashed' : 'solid'} ${C.rule}`, background: dim ? 'transparent' : '#F4F8F9', padding: '3px 8px' }}>
-      {x.item}
-      <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 5 }}>
-        末單 {String(x.last).slice(5)} · 距今 {gapDays} 天 · {qty} EA{avg ? `（平均每批 ${avg}）` : ''}
-      </span>
-    </span>
+    <div style={{ background: warn ? C.amberBg : (dim ? 'transparent' : '#F7FAFB'),
+      border: `1px ${dim ? 'dashed' : 'solid'} ${warn ? C.amber : C.rule}`,
+      borderLeftWidth: warn ? 3 : 1, borderLeftColor: warn ? C.amber : C.rule,
+      padding: '8px 11px' }}>
+      <div className="flex items-baseline flex-wrap" style={{ gap: 6 }}>
+        <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: warn ? 700 : 600,
+          color: dim ? C.ink3 : C.ink }}>
+          {warn && <span style={{ color: C.amber, marginRight: 3 }}>⚠</span>}{x.item}
+        </span>
+        {warn && (
+          /* 算式：分子、分母、商放在同一行——三者原本散在三處，讀者得自己認出關係。
+             刻意使用已四捨五入的 avg_int，使畫面上的數字自己除得出來。 */
+          <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: C.ink2 }}>
+            {gapDays} 天沒訂 ÷ 常態 {x.avg_int} 天 =
+            <b style={{ color: C.red, fontSize: 13, marginLeft: 4 }}>{warn.wr.toFixed(2)} 倍</b>
+          </span>
+        )}
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: 10.5, color: dim ? C.ink3 : C.ink2, marginTop: 2 }}>
+        末單 {String(x.last).slice(5)}
+        {!warn && ` · 距今 ${gapDays} 天`}
+        {` · ${qty} EA`}{avg ? `（平均每批 ${avg}）` : ''}
+      </div>
+      {a && (
+        <div style={{ marginTop: 6, paddingLeft: 8, borderLeft: `2px solid ${C.amber}` }}>
+          <div style={{ fontFamily: SANS, fontSize: 11.5, fontWeight: 700, color: C.amber }}>{a.tag}</div>
+          <div style={{ fontSize: 12.5, color: C.ink, lineHeight: 1.7, marginTop: 1 }}>{a.ask}</div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1519,8 +1549,8 @@ function StoreCard({ st, days, fire, compact }) {
           )}
         </span>
       </div>
-      {fire && (
-        <div style={{ marginTop: 8, background: C.amberBg, border: `1px solid ${C.amber}`, padding: '8px 10px' }}>
+      {false && (
+        <div>
           {st.warns.map((w) => (
             <div key={w.item} style={{ marginBottom: 4 }}>
               {/* 品項與倍數同一行（窄螢幕也不拆開），細節縮到次行 */}
@@ -1546,6 +1576,7 @@ function StoreCard({ st, days, fire, compact }) {
           ))}
         </div>
       )}
+      {(() => { return null; })()}
       {compact && (
         <button onClick={() => setOpen(!open)}
           style={{ fontFamily: SANS, fontSize: 12, color: C.teal, background: 'none', border: 'none', padding: '7px 0 0', display: 'block' }}>
@@ -1553,15 +1584,15 @@ function StoreCard({ st, days, fire, compact }) {
         </button>
       )}
       {detail && (
-      <div className="flex flex-wrap" style={{ gap: 5, marginTop: 9 }}>
-        {st.hit.map((x) => <LineChip key={x.item} x={x} />)}
+      <div style={{ display: 'grid', gap: 6, marginTop: 9 }}>
+        {st.hit.map((x) => <LineRow key={x.item} x={x} warn={(st.warns || []).find((w) => w.item === x.item)} />)}
       </div>
       )}
       {detail && st.miss.length > 0 && (
         <div style={{ marginTop: 9, borderTop: `1px dashed ${C.rule}`, paddingTop: 8 }}>
           <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 600 }}>另 {st.miss.length} 條這天還沒熟，不要硬談，要分次去</div>
-          <div className="flex flex-wrap" style={{ gap: 5, marginTop: 6 }}>
-            {st.miss.map((x) => <LineChip key={x.item} x={x} dim />)}
+          <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+            {st.miss.map((x) => <LineRow key={x.item} x={x} warn={(st.warns || []).find((w) => w.item === x.item)} dim />)}
           </div>
         </div>
       )}
@@ -1792,6 +1823,8 @@ function Schedule({ entries }) {
         )}
       </div>
 
+      {/* ⚠ 死碼：v2.1.0 兩區重構後保留之舊版店卡，[].map 永不執行。
+         保留僅供對照，如需恢復請先確認 LineRow 的 warn 參數傳遞。 */}
       <div style={{ display: 'none' }}>
         <div style={{ display: 'grid', gap: 9 }}>
           {[].map((st) => {
@@ -1811,13 +1844,13 @@ function Schedule({ entries }) {
                   </span>
                 </div>
                 <div className="flex flex-wrap" style={{ gap: 5, marginTop: 9 }}>
-                  {st.hit.map((x) => <LineChip key={x.item} x={x} />)}
+                  {st.hit.map((x) => <LineRow key={x.item} x={x} />)}
                 </div>
                 {st.miss.length > 0 && (
                   <div style={{ marginTop: 9, borderTop: `1px dashed ${C.rule}`, paddingTop: 8 }}>
                     <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 600 }}>另 {st.miss.length} 條這天還沒熟，不要硬談，要分次去</div>
                     <div className="flex flex-wrap" style={{ gap: 5, marginTop: 6 }}>
-                      {st.miss.map((x) => <LineChip key={x.item} x={x} dim />)}
+                      {st.miss.map((x) => <LineRow key={x.item} x={x} dim />)}
                     </div>
                   </div>
                 )}
