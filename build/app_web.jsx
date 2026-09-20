@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.5.1', '2026-09-20', '資料頁顯示資料檔建置時間：程式有版號可自動比對並提示更新，資料檔沒有，原本只能靠翻客戶卡內容猜匯入的是哪一份'],
   ['2.5.0', '2026-09-20', '客戶卡議題顯示進度：若該議題在拜訪紀錄中出現過同名者，帶出最近一次的日期、結果與備註。已談出結果的標綠、仍「沒談到」的標灰並提示這次要談。原本劇本與紀錄各自獨立，已談完的議題會被重問、已推進的當成沒發生（案例：建祥 7/29 已問到 175 盒去化、已提 409 條件，卡片仍列為待談）'],
   ['2.4.1', '2026-09-20', '複盤頁「本月補回來的 N 條」改為收合式：預設一列（大數字＋一句說明＋「看是哪幾條」），點開才列逐條。逐條改為左側綠邊卡片、資訊壓成一行「N 倍（末單 MM-DD）→ MM-DD 補回」，窄螢幕不拆行'],
   ['2.4.0', '2026-09-20', '拜訪歷程由複盤頁搬至「拜訪前」頁底（查閱上次談什麼的直覺入口是這裡），預設收合；排程卡片的建議日若落在該月最後 7 天內，加註「近月底、提醒搭贈」'],
@@ -219,6 +220,7 @@ function hydrate(p) {
   TOPIC_KIND = p.topicKind || {};
   SEED = p.seed || [];
   HA_PITCH = p.haPitch || '';
+  DS_BUILT = p.buildAt || '';
   // ── 衍生值：全部在這裡重算，不得散落到模組層 ──
   PRI_SET = new Set(PRIORITY.map((x) => x.grp));
   ALL_GRPS = [
@@ -385,6 +387,7 @@ const allCadence = (grp, entries) => {
 let CH = null;
 const cum25 = (series, mmdd) => (series || []).reduce((a, [d, v]) => (d <= mmdd ? a + v : a), 0);
 let CUT_MMDD = '';   // 同上，於 hydrate 時設定
+let DS_BUILT = '';   // 資料檔建置時間。程式有版號可比對，資料檔沒有——顯示出來才知道匯入的是哪一份。
 
 /* 涵蓋度門檻與未補登客戶清單已於 2026/09/03 移除（SOP 裁定 16 修訂）。
    原設計是：補登涵蓋度 ≥80% 才輸出通路即時成長率，未達則留白並列出待補客戶。
@@ -1985,10 +1988,16 @@ function DataScreen({ log, onReplace, backups, onRestore, entries, onExported })
 
       <div>
         <Eyebrow>資料檔 · 分析數字與客戶劇本</Eyebrow>
-        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, margin: '6px 0 8px' }}>
+        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, margin: '6px 0 4px' }}>
           目前：<b style={{ color: C.ink }}>{DATASET || '未匯入'}</b>
           {CUTOFF && <>｜官方截止 <Num size={11}>{CUTOFF}</Num></>}
           ｜客戶群 <Num size={11}>{GROUP_LIST.length}</Num>
+        </div>
+        {/* 資料檔建置時間：程式版號會自動比對並提示更新，資料檔不會——
+            沒有這一行就只能翻客戶卡內容猜自己匯入的是哪一份。（2026/09/20） */}
+        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, marginBottom: 8 }}>
+          資料檔建置：<Num size={12} color={C.ink} weight={600}>{DS_BUILT || '（此檔無建置時間，為舊版格式）'}</Num>
+          <span style={{ color: C.ink3, marginLeft: 6 }}>對照 Claude 給檔案時所報的時間</span>
         </div>
         <ImportGate compact onDone={() => { try { location.reload(); } catch {} }} />
       </div>
