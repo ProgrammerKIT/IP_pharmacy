@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.6.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.6.0', '2026-09-20', '斷單警訊直接給出「該問什麼」：依末批量÷平均每批推導談法——吃了大批的問去化（別問怎麼沒訂，會被回還有貨）、正常批量卻停的直接問原因、新導入線點出第二輪沒接上最易永久流失、上次就訂得少的問是不是分單或試水溫。原本只給數字，使用者得自己比對才看得出差別'],
   ['2.5.1', '2026-09-20', '資料頁顯示資料檔建置時間：程式有版號可自動比對並提示更新，資料檔沒有，原本只能靠翻客戶卡內容猜匯入的是哪一份'],
   ['2.5.0', '2026-09-20', '客戶卡議題顯示進度：若該議題在拜訪紀錄中出現過同名者，帶出最近一次的日期、結果與備註。已談出結果的標綠、仍「沒談到」的標灰並提示這次要談。原本劇本與紀錄各自獨立，已談完的議題會被重問、已推進的當成沒發生（案例：建祥 7/29 已問到 175 盒去化、已提 409 條件，卡片仍列為待談）'],
   ['2.4.1', '2026-09-20', '複盤頁「本月補回來的 N 條」改為收合式：預設一列（大數字＋一句說明＋「看是哪幾條」），點開才列逐條。逐條改為左側綠邊卡片、資訊壓成一行「N 倍（末單 MM-DD）→ MM-DD 補回」，窄螢幕不拆行'],
@@ -363,6 +364,34 @@ function cadence(grp, item, entries) {
    單用倍數：訂得疏的店要等很久才達標（平均 49 天的線要空 49 天才到 2 倍），會漏掉慢節奏客戶。
    單用超過見底：對訂得勤的店太敏感（平均 17 天的線延一輪多就報警）。
    兩者同時成立才報，實測 84 條線命中 17 條（20%），且未漏掉原 2 倍規則抓到的任何一條。 */
+/* 該問什麼：由「末批量 ÷ 平均每批」推導談法。
+   同樣是斷單，末批吃了雙倍量的線多半還在消化，進門問「怎麼沒訂」會被回「還有貨」；
+   末批是正常量卻停了的線才是真的停。兩者問法不同，但畫面原本只給數字，
+   使用者得自己比對 80 與 39.1 才看得出來。（2026/09/20） */
+const BATCH_BIG = 1.5;
+const BATCH_SMALL = 0.7;
+function askWhat(c, isNew) {
+  const m = (c.avg_batch && c.last_batch) ? c.last_batch / c.avg_batch : 1;
+  if (m >= BATCH_BIG) {
+    return {
+      tag: '可能還在消化',
+      ask: `上次一口氣拿 ${c.last_batch} EA，是平常批量的 ${m.toFixed(1)} 倍。別問「怎麼沒訂」，會被回「還有貨」——直接問那批賣得如何、大概什麼時候要補。`,
+    };
+  }
+  if (m <= BATCH_SMALL) {
+    return {
+      tag: '上次就訂得少',
+      ask: `上次只訂 ${c.last_batch} EA，不到平常的 ${Math.round(m * 100)}%，之後就沒再訂。先問是動銷變慢、分單給別人，還是在試水溫。`,
+    };
+  }
+  return {
+    tag: isNew ? '新線第二輪沒接上' : '正常批量卻停了',
+    ask: isNew
+      ? `這是今年才導入的線，上次是正常批量 ${c.last_batch} EA，之後就停了。新品第二輪沒接上最容易永久流失——問是賣不動、店員不會推，還是被別的品項排擠。`
+      : `上次是正常批量 ${c.last_batch} EA，不是囤了大批，停了就是真的停了。直接問是賣不動、被競品接走，還是採購改了節奏。`,
+  };
+}
+
 const WARN_RATIO = 1.5;
 const WARN_PAST_DAYS = 21;
 const isStockout = (c, gapDays) => {
@@ -1504,6 +1533,15 @@ function StoreCard({ st, days, fire, compact }) {
               <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 1 }}>
                 末單 {String(w.last).slice(5)} · 訂單平均相隔 {w.avg_int} 天
               </div>
+              {(() => {
+                const a = askWhat(w, w.isNew);
+                return (
+                  <div style={{ marginTop: 4, paddingLeft: 8, borderLeft: `2px solid ${C.amber}` }}>
+                    <div style={{ fontFamily: SANS, fontSize: 11, fontWeight: 700, color: C.amber }}>{a.tag}</div>
+                    <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.7, marginTop: 1 }}>{a.ask}</div>
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -1575,7 +1613,11 @@ function Schedule({ entries }) {
     const warns = lines.filter((x) => {
       const gap = (new Date(TODAY_STR()) - new Date(x.last)) / 86400000;
       return isStockout(x, gap);
-    }).map((x) => ({ ...x, wr: ((new Date(TODAY_STR()) - new Date(x.last)) / 86400000) / x.avg_int }))
+    }).map((x) => {
+      const it = ((DATA[grp] || {}).items || []).find((y) => y.item === x.item);
+      return { ...x, wr: ((new Date(TODAY_STR()) - new Date(x.last)) / 86400000) / x.avg_int,
+               isNew: !!it && !it.s25 && !!it.s26 };
+    })
       .sort((a, b) => b.wr - a.wr);
     return { grp, lines, date: best.date, hit: best.hit, miss, rate: best.hit.length / lines.length,
              warns, maxr: warns.length ? warns[0].wr : 0 };
