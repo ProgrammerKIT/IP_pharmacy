@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.9.1';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.9.1', '2026-09-25', '複盤頁移除「仍未解除的斷單警訊」：與排程頁滅火區為同一批線，而排程頁另有倍數排序、一趟收幾條、每條線該問什麼，資訊更完整。複盤專注於成果（已解除／歸零復活／全新開發），該去哪一家統一看排程'],
   ['2.9.0', '2026-09-25', '排程頁新增「即將到期 · 未來 14 天內」：建議日尚未到的線原本只存在於預設收合的逐條清單，等於看不見（85 條中有 51 條未到期，三家客戶完全沒有線進入滅火／效率兩區）。同時在該區與逐條清單標出「已達斷單門檻」——警訊與建議日是兩套門檻，未到期卻已成立的警訊原本兩區都不會顯示'],
   ['2.8.0', '2026-09-25', '複盤頁成果擴充為三類：解除斷單警訊、歸零線復活（2025 有量、本期官方掛零）、全新開發（兩年皆掛零）。原本只算解除警訊，抓不到歸零線重新進單與首次開發——而掛零線本來就算不出倍數、永遠進不了警訊清單。特註豁免線列入後兩類並標示：依裁定 9，豁免線回單本身即側源不穩訊號'],
   ['2.7.1', '2026-09-20', '移除 v2.5.0 變更紀錄中誤寫入的客戶名稱與價格條件（變更紀錄屬程式檔、會公開，不得含客戶資料）'],
@@ -1289,15 +1290,6 @@ function Review({ log, onClear, onEdit, entries }) {
   const [copied, setCopied] = useState(false);
 
   const today = TODAY_STR();
-  const rawWarns = GROUP_LIST.flatMap((d) =>
-    allCadence(d.grp, entries).filter((c) => {
-      if (!c.ok) return false;
-      return isStockout(c, (new Date(today) - new Date(c.last)) / 86400000);
-    }).map((c) => {
-      const gap = Math.round((new Date(today) - new Date(c.last)) / 86400000);
-      return { grp: d.grp, item: c.item, avg: c.avg_int, gap, ratio: c.avg_int ? gap / c.avg_int : 0 };
-    })
-  );
   /* 依「倍數」排序，不是逾期天數——天數沒有除掉各店本來的訂貨頻率。
      兩個多月訂一次的店逾 131 天只是剛過兩輪；半個月訂一次的店逾 60 天
      等於跳過三次半，後者才是真的不對勁。 */
@@ -1349,9 +1341,6 @@ function Review({ log, onClear, onEdit, entries }) {
   revived.sort((a, b) => b.amt - a.amt);
   brandNew.sort((a, b) => b.amt - a.amt);
 
-  const allWarns = rawWarns.filter((w) => !exempt(w.grp, w.item))
-    .sort((a, b) => b.ratio - a.ratio);
-  const exWarns = rawWarns.filter((w) => exempt(w.grp, w.item));
 
   return (
     <div className="p-4" style={{ display: 'grid', gap: 18 }}>
@@ -1490,25 +1479,9 @@ function Review({ log, onClear, onEdit, entries }) {
               )}
             </div>
           )}
-          <SecHead n={cleared.length > 0 ? '2' : '1'} t="仍未解除的斷單警訊" />
-        <div style={{ background: C.surf, border: `1px solid ${C.hair}` }}>
-          {allWarns.map((w, i) => (
-            <div key={i} className="flex justify-between items-baseline px-4 py-2" style={{ borderBottom: `1px solid ${C.hair}` }}>
-              <span style={{ fontSize: 13, color: C.ink }}>{w.grp}　<span style={{ color: C.ink2 }}>{w.item}</span></span>
-              <span><Num size={11} color={C.ink3}>平均 {w.avg} 天</Num><span style={{ color: C.ink3, margin: '0 6px' }}>·</span><Num size={12} color={C.amber}>{w.gap} 天未訂</Num><span style={{ color: C.ink3, margin: '0 6px' }}>·</span><Num size={12.5} color={C.red} weight={600}>{w.ratio.toFixed(2)} 倍</Num></span>
-            </div>
-          ))}
-        </div>
-        {exWarns.length > 0 && (
-          <div style={{ fontSize: 12, color: C.ink3, lineHeight: 1.7, marginTop: 8, borderLeft: `2px solid ${C.rule}`, paddingLeft: 10 }}>
-            另有 {exWarns.length} 條（{exWarns.map((w) => `${w.grp} ${w.item}`).join('、')}）因客戶特註豁免，已排除在驗證之外——
-            它們的掛零原因已知，不是預測要驗的東西。
-          </div>
-        )}
-        <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, marginTop: 8 }}>
-          這些線是用「訂貨間隔拉長到平均 2 倍」判出來的。下期資料進來時逐條回頭看：真的斷了幾條、
-          誤報幾條。誤報多就把門檻往上調，漏報多就往下調——門檻是拿來校準的，不是拿來供著的。
-        </div>
+          {/* 「仍未解除的斷單警訊」已於 2026/09/25 移除：與排程頁滅火區為同一批線，
+              而排程頁另有依倍數排序、一趟收幾條、以及每條線「該問什麼」，資訊更完整。
+              複盤保留成果（已解除／復活／新開發），該去哪一家統一看排程。 */}
       </div>
 
       <div>
