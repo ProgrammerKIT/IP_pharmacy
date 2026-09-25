@@ -11,7 +11,7 @@ w.addEventListener('error', e => errs.push(e.message));
 w.console.error = (...a) => errs.push(String(a[0]).slice(0, 160));
 const btn = t => [...d.querySelectorAll('button')].find(b => b.textContent.trim() === t);
 const click = el => el && el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-const TABS = ['🔥接單', '拜訪前', '複盤', '排程', '資料'];
+const TABS = ['🔥接單', '拜訪前', '排程', '複盤', '資料'];
 let fail = 0, i = 0;
 
 function done() {
