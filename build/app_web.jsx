@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.7.1';
+const APP_VERSION = '2.8.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.8.0', '2026-09-25', '複盤頁成果擴充為三類：解除斷單警訊、歸零線復活（2025 有量、本期官方掛零）、全新開發（兩年皆掛零）。原本只算解除警訊，抓不到歸零線重新進單與首次開發——而掛零線本來就算不出倍數、永遠進不了警訊清單。特註豁免線列入後兩類並標示：依裁定 9，豁免線回單本身即側源不穩訊號'],
   ['2.7.1', '2026-09-20', '移除 v2.5.0 變更紀錄中誤寫入的客戶名稱與價格條件（變更紀錄屬程式檔、會公開，不得含客戶資料）'],
   ['2.7.0', '2026-09-20', '排程卡片版面合併：原本警訊另開琥珀框、線況另列灰底方塊，同一條線的品項名與末單日重複出現，而「該問什麼」引用的批量又在另一區。改為一條線一列，數字只出現一次；倍數改以算式呈現（N 天沒訂 ÷ 常態 M 天 = X 倍），分子分母商同行。警訊狀態改標在該列上，不再依分組決定，避免警訊線落在「還沒熟」那組時漏顯示'],
   ['2.6.0', '2026-09-20', '斷單警訊直接給出「該問什麼」：依末批量÷平均每批推導談法——吃了大批的問去化（別問怎麼沒訂，會被回還有貨）、正常批量卻停的直接問原因、新導入線點出第二輪沒接上最易永久流失、上次就訂得少的問是不是分單或試水溫。原本只給數字，使用者得自己比對才看得出差別'],
@@ -1302,23 +1303,50 @@ function Review({ log, onClear, onEdit, entries }) {
   /* 補登解除：同一條線，只用官方訂單算為警訊（≥2 倍），併入補登後降到 2 倍以下。
      代表這條線是被截止日之後的訂單救回來的——那是這個月拜訪或聯繫的成果，
      原本只會從警訊清單靜靜消失，看不出曾經發生過。 */
-  const cleared = GROUP_LIST.flatMap((d) => {
+  /* 本月成果分三類，互斥且各有意義：
+     ① 解除警訊——官方資料算為斷單、因截止日後接到單而降到門檻以下
+     ② 歸零線復活——2025 有量、2026 官方期間掛零，這個月重新進單
+     ③ 全新開發——兩年皆掛零，這個月首次進單
+     ②③ 的判準綁在當期官方口徑上：下一期 Offtake 進來後這些線就不再是「歸零」或
+     「未開發」，此分類只在當期成立，不可跨期沿用。
+     特註豁免線仍列入 ②③ 並標示——依裁定 9，豁免線突然回單本身就是側源不穩的訊號，
+     是要看見的事，不是要濾掉的事。 */
+  const liveOf = (grp, item) => liveEntries(entries).filter((e) => e.grp === grp && e.item === item);
+  const lastLive = (grp, item) => {
+    const l = liveOf(grp, item).map((e) => e.date).sort();
+    return l.length ? l[l.length - 1] : null;
+  };
+  const amtLive = (grp, item) => liveOf(grp, item)
+    .reduce((a, e) => a + (Number(e.paidEA) || 0) * (Number(e.unit) || 0), 0);
+
+  const cleared = [], revived = [], brandNew = [];
+  GROUP_LIST.forEach((d) => {
     const withLive = allCadence(d.grp, entries);
     const official = allCadence(d.grp, []);
-    return official.filter((o) => {
-      if (!o.ok || exempt(d.grp, o.item)) return false;
-      const g0 = (new Date(today) - new Date(o.last)) / 86400000;
-      if (!isStockout(o, g0)) return false;
-      const w = withLive.find((x) => x.item === o.item);
-      if (!w || !w.ok || w.last === o.last) return false;
-      const g1 = (new Date(today) - new Date(w.last)) / 86400000;
-      return !isStockout(w, g1);
-    }).map((o) => ({
-      grp: d.grp, item: o.item,
-      wasLast: o.last, wasRatio: ((new Date(today) - new Date(o.last)) / 86400000) / o.avg_int,
-      nowLast: (withLive.find((x) => x.item === o.item) || {}).last,
-    }));
-  }).sort((a, b) => b.wasRatio - a.wasRatio);
+    const items = new Set(liveEntries(entries).filter((e) => e.grp === d.grp).map((e) => e.item));
+    items.forEach((item) => {
+      const o = official.find((x) => x.item === item);
+      const w = withLive.find((x) => x.item === item);
+      const ex = !!exempt(d.grp, item);
+      const base = { grp: d.grp, item, ex, nowLast: lastLive(d.grp, item), amt: amtLive(d.grp, item) };
+      // ① 只看官方是警訊、併入補登後解除（豁免線不判斷單，故排除）
+      if (!ex && o && o.ok && w && w.ok && w.last !== o.last) {
+        const g0 = (new Date(today) - new Date(o.last)) / 86400000;
+        const g1 = (new Date(today) - new Date(w.last)) / 86400000;
+        if (isStockout(o, g0) && !isStockout(w, g1)) {
+          cleared.push({ ...base, wasLast: o.last, wasRatio: g0 / o.avg_int });
+          return;
+        }
+      }
+      const it = (d.items || []).find((x) => x.item === item);
+      if (!it) return;
+      if (it.s25 > 0 && it.s26 === 0) revived.push({ ...base, s25: it.s25 });
+      else if (it.s25 === 0 && it.s26 === 0) brandNew.push({ ...base });
+    });
+  });
+  cleared.sort((a, b) => b.wasRatio - a.wasRatio);
+  revived.sort((a, b) => b.amt - a.amt);
+  brandNew.sort((a, b) => b.amt - a.amt);
 
   const allWarns = rawWarns.filter((w) => !exempt(w.grp, w.item))
     .sort((a, b) => b.ratio - a.ratio);
@@ -1369,6 +1397,12 @@ function Review({ log, onClear, onEdit, entries }) {
                   <span style={{ fontFamily: SANS, fontSize: 14, fontWeight: 700, color: C.ink }}>
                     條本月補回來了
                   </span>
+                  {(revived.length > 0 || brandNew.length > 0) && (
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: C.ink2 }}>
+                      {revived.length > 0 && ` · 復活 ${revived.length}`}
+                      {brandNew.length > 0 && ` · 新開發 ${brandNew.length}`}
+                    </span>
+                  )}
                   <span style={{ marginLeft: 'auto', fontFamily: SANS, fontSize: 12, color: C.teal }}>
                     {showCleared ? '收起' : '看是哪幾條'}
                   </span>
@@ -1380,6 +1414,59 @@ function Review({ log, onClear, onEdit, entries }) {
 
               {showCleared && (
                 <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  {revived.length > 0 && (
+                    <div style={{ fontFamily: SANS, fontSize: 11.5, fontWeight: 700, color: C.teal, marginTop: 2 }}>
+                      歸零線復活 · 2025 有量、2026 官方期間掛零，這個月重新進單
+                    </div>
+                  )}
+                  {revived.map((r) => (
+                    <div key={r.grp + r.item}
+                      style={{ background: C.surf, border: `1px solid ${C.hair}`, borderLeft: `3px solid ${C.teal}`, padding: '9px 12px' }}>
+                      <div className="flex items-baseline" style={{ gap: 7 }}>
+                        <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{r.grp}</span>
+                        <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>{r.item}</span>
+                        {r.ex && <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.amber, border: `1px solid ${C.amber}`, padding: '0 4px' }}>特註豁免</span>}
+                        <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: C.teal }}>復活</span>
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 3 }}>
+                        2025 {nf(r.s25)} → 本期官方 0
+                        <span style={{ color: C.ink3, margin: '0 5px' }}>→</span>
+                        <span style={{ color: C.teal }}>{String(r.nowLast).slice(5)} 進單 {nf(r.amt)}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {brandNew.length > 0 && (
+                    <div style={{ fontFamily: SANS, fontSize: 11.5, fontWeight: 700, color: C.teal, marginTop: 6 }}>
+                      全新開發 · 兩年皆掛零，這個月首次進單
+                    </div>
+                  )}
+                  {brandNew.map((r) => (
+                    <div key={r.grp + r.item}
+                      style={{ background: C.surf, border: `1px solid ${C.hair}`, borderLeft: `3px solid ${C.teal}`, padding: '9px 12px' }}>
+                      <div className="flex items-baseline" style={{ gap: 7 }}>
+                        <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: C.ink }}>{r.grp}</span>
+                        <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>{r.item}</span>
+                        {r.ex && <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.amber, border: `1px solid ${C.amber}`, padding: '0 4px' }}>特註豁免</span>}
+                        <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: C.teal }}>新開發</span>
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, marginTop: 3 }}>
+                        兩年皆 0
+                        <span style={{ color: C.ink3, margin: '0 5px' }}>→</span>
+                        <span style={{ color: C.teal }}>{String(r.nowLast).slice(5)} 進單 {nf(r.amt)}</span>
+                      </div>
+                      {r.ex && (
+                        <div style={{ fontSize: 11.5, color: C.amber, lineHeight: 1.6, marginTop: 4 }}>
+                          這條是特註豁免線（已知有側源、平常不判斷單）。它回單本身就是側源供貨不穩的訊號，
+                          順勢問對方現在的進貨來源與價格。
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {cleared.length > 0 && (
+                    <div style={{ fontFamily: SANS, fontSize: 11.5, fontWeight: 700, color: C.green, marginTop: 6 }}>
+                      解除斷單警訊 · 只看官方資料已達門檻，因你接到單而解除
+                    </div>
+                  )}
                   {cleared.map((c) => (
                     <div key={c.grp + c.item}
                       style={{ background: C.surf, borderLeft: `3px solid ${C.green}`,
