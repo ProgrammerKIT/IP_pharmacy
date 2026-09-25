@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.9.0', '2026-09-25', '排程頁新增「即將到期 · 未來 14 天內」：建議日尚未到的線原本只存在於預設收合的逐條清單，等於看不見（85 條中有 51 條未到期，三家客戶完全沒有線進入滅火／效率兩區）。同時在該區與逐條清單標出「已達斷單門檻」——警訊與建議日是兩套門檻，未到期卻已成立的警訊原本兩區都不會顯示'],
   ['2.8.0', '2026-09-25', '複盤頁成果擴充為三類：解除斷單警訊、歸零線復活（2025 有量、本期官方掛零）、全新開發（兩年皆掛零）。原本只算解除警訊，抓不到歸零線重新進單與首次開發——而掛零線本來就算不出倍數、永遠進不了警訊清單。特註豁免線列入後兩類並標示：依裁定 9，豁免線回單本身即側源不穩訊號'],
   ['2.7.1', '2026-09-20', '移除 v2.5.0 變更紀錄中誤寫入的客戶名稱與價格條件（變更紀錄屬程式檔、會公開，不得含客戶資料）'],
   ['2.7.0', '2026-09-20', '排程卡片版面合併：原本警訊另開琥珀框、線況另列灰底方塊，同一條線的品項名與末單日重複出現，而「該問什麼」引用的批量又在另一區。改為一條線一列，數字只出現一次；倍數改以算式呈現（N 天沒訂 ÷ 常態 M 天 = X 倍），分子分母商同行。警訊狀態改標在該列上，不再依分組決定，避免警訊線落在「還沒熟」那組時漏顯示'],
@@ -1953,7 +1954,56 @@ function Schedule({ entries }) {
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <SecHead n="3" t={`單條線排程 ${rows.length} 條`} />
+        {(() => {
+          /* 即將到期：建議日在未來 SOON_DAYS 天內。兩區只放「建議日已過」的線，
+             未到期的原本只存在於逐條清單裡，而那一區預設收合、沒有重點，等於看不見。
+             實測：85 條可計算線中 51 條未到期，其中三家客戶完全沒有線進入兩區。 */
+          const SOON_DAYS = 14;
+          const t0 = new Date(TODAY_STR());
+          const soon = rows
+            .filter((r) => {
+              const dd = Math.round((new Date(r.d_int) - t0) / 86400000);
+              return dd > 0 && dd <= SOON_DAYS;
+            })
+            .sort((a, b) => (a.d_int < b.d_int ? -1 : 1));
+          if (!soon.length) return null;
+          return (
+            <div style={{ marginBottom: 18 }}>
+              <SecHead n="3" t={`即將到期 · 未來 ${SOON_DAYS} 天內 ${soon.length} 條`} />
+              <div style={{ fontSize: 11.5, color: C.ink3, lineHeight: 1.75, marginBottom: 7 }}>
+                建議日還沒到，所以不在上面兩區。排下週行程用這張。
+              </div>
+              <div style={{ display: 'grid', gap: 5 }}>
+                {soon.map((r) => {
+                  const dd = Math.round((new Date(r.d_int) - t0) / 86400000);
+                  const gap = Math.round((new Date(TODAY_STR()) - new Date(r.last)) / 86400000);
+                  const w = isStockout(r, gap) && !exempt(r.grp, r.item);
+                  return (
+                    <div key={`${r.grp}-${r.item}`} className="flex items-baseline flex-wrap"
+                      style={{ gap: 8, background: w ? C.amberBg : C.surf,
+                        border: `1px solid ${w ? C.amber : C.hair}`, padding: '7px 11px' }}>
+                      <Num size={12} color={dd <= 3 ? C.red : C.ink} weight={600}>{String(r.d_int).slice(5)}</Num>
+                      <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: C.ink }}>{r.grp}</span>
+                      <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>{r.item}</span>
+                      {/* 未到期卻已成立的警訊：兩區都不會顯示它，這裡是唯一出口。
+                          今天沒有這種線，但兩個門檻算法不同，不保證永遠沒有。 */}
+                      {w && (
+                        <span style={{ fontFamily: MONO, fontSize: 9.5, color: '#fff', background: C.amber, padding: '1px 5px' }}>
+                          已達斷單門檻
+                        </span>
+                      )}
+                      <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+                        {dd === 1 ? '明天' : `${dd} 天後`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        <SecHead n="4" t={`單條線排程 ${rows.length} 條`} />
         <button onClick={() => setLineList(!lineList)}
           style={{ width: '100%', textAlign: 'left', background: C.surf, border: `1px solid ${C.hair}`,
             padding: '10px 14px', fontFamily: SANS, fontSize: 12.5, color: C.teal }}>
@@ -1967,6 +2017,8 @@ function Schedule({ entries }) {
         <div style={{ background: C.surf, border: `1px solid ${C.hair}`, marginTop: 9 }}>
           {rows.map((r, i) => {
             const od = days(r.d_int);
+            const _gap = Math.round((new Date(TODAY_STR()) - new Date(r.last)) / 86400000);
+            const _warn = isStockout(r, _gap) && !exempt(r.grp, r.item);
             const isOpen = open === `${r.grp}-${r.item}`;
             return (
               <div key={i} style={{ borderBottom: `1px solid ${C.hair}` }}>
@@ -2018,7 +2070,7 @@ function Schedule({ entries }) {
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <SecHead n="4" t={`樣本不足 ${weak.length} 條 · 不給日期`} />
+        <SecHead n="5" t={`樣本不足 ${weak.length} 條 · 不給日期`} />
         <div style={{ background: C.surf, border: `1px solid ${C.hair}` }}>
           {weak.map((r, i) => (
             <div key={i} className="flex items-baseline flex-wrap px-3 py-2" style={{ borderBottom: `1px solid ${C.hair}`, gap: 8 }}>
