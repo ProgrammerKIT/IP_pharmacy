@@ -4,17 +4,22 @@ set -e
 cd "$(dirname "$0")"
 XLSX="${1:?用法：./build.sh <Offtake.xlsx>}"
 
-echo "── 1/6 資料管線 ──"
+echo "── 1/7 資料管線 ──"
 python3 pipeline.py "$XLSX"
 
-echo "── 2/6 指紋對帳 ──"
+echo "── 2/7 指紋對帳 ──"
 if [ -f baseline_prev.json ]; then python3 verify_baseline.py baseline.json baseline_prev.json ${VERIFY_EXTRA:-}
 else echo "   （無上期指紋，略過；本期 baseline.json 將成為下期基準）"; fi
 
-echo "── 3/6 洩漏掃描（硬閘門）──"
+echo "── 3/7 口徑同步檢查（硬閘門）──"
+SOP=$(ls -1 *SOP*.md 2>/dev/null | tail -1)
+if [ -n "$SOP" ]; then python3 check_sync.py "$SOP"
+else echo "   ⚠ 執行目錄無 SOP 主檔，略過同步檢查（請將 SOP 放在此處以啟用）"; fi
+
+echo "── 4/7 洩漏掃描（硬閘門）──"
 python3 scan_leak.py
 
-echo "── 4/6 組版 ──"
+echo "── 5/7 組版 ──"
 BUILD_AT=$(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')
 python3 - "$BUILD_AT" << 'PY'
 import sys
@@ -27,7 +32,7 @@ npx --yes esbuild@0.21.5 build_src.jsx --loader:.jsx=jsx --bundle --minify --cha
 python3 mkhtml.py
 python3 mkver.py
 
-echo "── 4.5/6 產出資料檔（客戶資料，不進 repo）──"
+echo "── 5.5/7 產出資料檔（客戶資料，不進 repo）──"
 node -e "const fs=require('fs');
 const src=require('./play_src.js');
 const meta=src.__meta||{};
@@ -43,9 +48,9 @@ fs.writeFileSync('pharmacy-data.json',JSON.stringify(out));
 console.log('   pharmacy-data.json',JSON.stringify(out).length,'bytes | 劇本',Object.keys(play).length,'組 | 豁免',out.exempt.length,'條 | 優先序',out.priority.length,'家');
 " "$BUILD_AT"
 
-echo "── 5/6 測試（五分頁巡檢 ＋ 客戶卡）──"
+echo "── 6/7 測試（五分頁巡檢 ＋ 客戶卡）──"
 node test_ui.js
 
-echo "── 6/6 完成 ──"
+echo "── 7/7 完成 ──"
 echo "   程式：IP_index.html / version.json（可公開）\n   資料：pharmacy-data.json（客戶資料，只給 Kit，不得推上 repo）"
 echo "   部署： GH_TOKEN=xxx python3 deploy.py \"版本說明\""
