@@ -14,7 +14,7 @@ import pandas as pd, numpy as np
 # ─────────────────────────────────────────────────────────────
 # 口徑規則（對應 SOP 裁定，改這裡之前先改 SOP）
 # ─────────────────────────────────────────────────────────────
-CUTOFF_PERIOD = 8          # 官方 YoY 比較期間：兩年皆 1–8 月（裁定 1、23；2026/09/03 Kit 裁定升級）
+CUTOFF_PERIOD = 9          # 官方 YoY 比較期間：兩年皆 1–9 月（裁定 1、23 滾動；2026/10/17 9 月資料到位）
 
 DROP_MATERIALS = [         # 完全剔除，不進任何計算（裁定 3）
     'SYSTANE HA UD 5X0.7ML 2',
@@ -36,6 +36,7 @@ ITEM_MAP = {               # 品項合併與簡寫（裁定 2、5）
     'SYSTANE ULTRA UD 24X0.5ML-TPE': 'Ultra UD',
     'SYSTANE ULTRA UDPF 24 X 0.5ML - TPE': 'Ultra UD',   # 同一產品異名，非新款
     'SYSTANE HA UD 30X0.7ML-TPE': 'HAUD',
+    'SYSTANE HYDRATION UDPF 30X0.7ML-TPE': 'HAUD',   # 同一產品異名（2026/10/17 Kit 裁定，2026/09 首見）
     'SYSTANE HA MULTI-DOSE 10ML- TPE': 'HAMD',
     'SYSTANE COMPLETE 5ML -  TPE': 'C',
     'TEARS NATURALE 15ML W/POLY-TPE': 'TN',
