@@ -123,7 +123,7 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.11.0';
+const APP_VERSION = '2.11.1';
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +131,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.11.1', '2026-10-17', '修正：曾列入優先序、有手寫劇本的客戶一旦移出優先序，會從「拜訪前」頁整個消失（含禁區）。改為移出優先序者列在「其餘」區、保留手寫劇本與禁區並標「劇本」；「其餘 N 家」改為依實際筆數顯示'],
   ['2.11.0', '2026-10-17', '口徑推進為 1–9 月（SOP v3.17 裁定 23 滾動）；體系內部拆解的期間標籤改由資料檔月數自動帶出，不再寫死；資料截止日 2026-09-29，補登 ≤ 此日者自動歸檔'],
   ['2.10.3', '2026-09-25', '建置再加一道硬閘門：口徑同步檢查。比對 SOP 明文與程式實際使用的值（期間口徑、客戶群數、排除名單、品項數、分層門檻、斷單門檻、單價表共 10 項），不一致即中止建置。SOP 與程式脫鉤時分析仍會跑完並產出看似正常的數字，錯誤不會自己浮現'],
   ['2.10.2', '2026-09-25', '建置流程加入洩漏掃描硬閘門：程式檔含任何客戶名稱、地址或單價即中止建置，產不出可部署檔案。關鍵字取自客戶名單檔而非手打清單，新增客戶自動納入掃描'],
@@ -755,13 +756,13 @@ function PrepList({ onPick, entries, log, onClear, onEdit }) {
         );
       })}
       <div className="px-4 pt-5 pb-2">
-        <Eyebrow>其餘 14 家 · 依 2026 金額排序</Eyebrow>
+        <Eyebrow>其餘 {ALL_GRPS.filter((g) => !PRI_SET.has(g)).length} 家 · 依 2026 金額排序</Eyebrow>
         <div style={{ fontSize: 12.5, color: C.ink2, lineHeight: 1.8, marginTop: 6 }}>
-          這些沒有手寫劇本，議題依規則自動生成（斷單、歸零、HA 空白、P1 佔比、SKU 收縮）。
-          接單補登與排程一樣涵蓋，數字都是真的。要升為重點客戶跟我說，我補一份劇本。
+          本月不在優先序。標「劇本」者仍保留手寫議題與禁區；其餘議題依規則自動生成（斷單、歸零、HA 空白、P1 佔比、SKU 收縮）。
+          接單補登與排程一樣涵蓋，數字都是真的。
         </div>
       </div>
-      {ALL_GRPS.filter((g) => !PLAY[g]).map((g) => {
+      {ALL_GRPS.filter((g) => !PRI_SET.has(g)).map((g) => {
         const dd = DATA[g];
         const mine = liveEntries(entries).filter((e) => e.grp === g);
         return (
@@ -770,6 +771,7 @@ function PrepList({ onPick, entries, log, onClear, onEdit }) {
             <div className="flex items-baseline flex-wrap" style={{ gap: 8 }}>
               <span style={{ fontFamily: SANS, fontSize: 15, fontWeight: 700, color: C.ink }}>{g}</span>
               <span style={{ fontFamily: MONO, fontSize: 10.5, color: TIER_C[dd.tier] }}>{dd.tier}</span>
+              {PLAY[g] && <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink2, border: `1px solid ${C.hair}`, padding: '1px 5px' }}>劇本</span>}
               <span style={{ marginLeft: 'auto' }}>
                 <Num size={12} color={C.ink2}>{nf(dd.s26)}</Num>
                 <Num size={12} color={dd.gr >= 0 ? C.green : C.red}>　{pf(dd.gr)}</Num>
