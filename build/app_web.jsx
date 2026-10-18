@@ -123,7 +123,8 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.11.1';
+const APP_VERSION = '2.12.0';
+const SOP_VER = '3.17';   // 標題列顯示之 SOP 版號；SOP 升版時同步更新
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -131,6 +132,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.12.0', '2026-10-18', 'iPhone 操作與版面：分頁列移到底部（單手好按，避開 Home 指示條）；狀態列後方補深色底，捲動內容不再穿過動態島；輸入框一律 16px，點下去不再整頁放大；所有按鈕觸控範圍至少 44pt，返回鍵加大；長頁面捲過一段後出現回頂端按鈕；標題列 SOP 版號更正為 v3.17。數字、文字與資料處理均未變動'],
   ['2.11.1', '2026-10-17', '修正：曾列入優先序、有手寫劇本的客戶一旦移出優先序，會從「拜訪前」頁整個消失（含禁區）。改為移出優先序者列在「其餘」區、保留手寫劇本與禁區並標「劇本」；「其餘 N 家」改為依實際筆數顯示'],
   ['2.11.0', '2026-10-17', '口徑推進為 1–9 月（SOP v3.17 裁定 23 滾動）；體系內部拆解的期間標籤改由資料檔月數自動帶出，不再寫死；資料截止日 2026-09-29，補登 ≤ 此日者自動歸檔'],
   ['2.10.3', '2026-09-25', '建置再加一道硬閘門：口徑同步檢查。比對 SOP 明文與程式實際使用的值（期間口徑、客戶群數、排除名單、品項數、分層門檻、斷單門檻、單價表共 10 項），不一致即中止建置。SOP 與程式脫鉤時分析仍會跑完並產出看似正常的數字，錯誤不會自己浮現'],
@@ -897,7 +899,7 @@ function Card({ grp, onBack, onLog, entries, log }) {
   return (
     <div>
       <div className="px-4 pt-4 pb-3" style={{ background: C.surf, borderBottom: `1px solid ${C.rule}` }}>
-        <button onClick={onBack} style={{ fontFamily: MONO, fontSize: 11, color: C.teal, letterSpacing: '0.1em' }}>← 優先序</button>
+        <button onClick={onBack} style={{ fontFamily: MONO, fontSize: 11, color: C.teal, letterSpacing: '0.1em', minHeight: 44, padding: '0 12px 0 0', display: 'inline-flex', alignItems: 'center' }}>← 優先序</button>
         <div className="flex items-baseline flex-wrap" style={{ gap: 10, marginTop: 8 }}>
           <h2 style={{ fontFamily: SANS, fontSize: 24, fontWeight: 900, color: C.ink }}>{grp}</h2>
           <span style={{ fontFamily: MONO, fontSize: 12, color: TIER_C[d.tier] }}>{d.tier}</span>
@@ -1197,7 +1199,7 @@ function LogForm({ grp, existing, onSave, onCancel, onDelete, allEntries }) {
     <div className="p-4" style={{ display: 'grid', gap: 16 }}>
       <div>
         <button onClick={() => { if (!existing) { try { localStorage.removeItem(KEY.draft); } catch {} } onCancel(); }}
-          style={{ fontFamily: MONO, fontSize: 11, color: C.teal }}>← {existing ? '取消編輯' : '取消（清除草稿）'}</button>
+          style={{ fontFamily: MONO, fontSize: 11, color: C.teal, minHeight: 44, padding: '0 12px 0 0', display: 'inline-flex', alignItems: 'center' }}>← {existing ? '取消編輯' : '取消（清除草稿）'}</button>
         <h2 style={{ fontFamily: SANS, fontSize: 22, fontWeight: 900, color: C.ink, marginTop: 8 }}>
           {grp}　{existing ? '編輯拜訪紀錄' : '拜訪紀錄'}
         </h2>
@@ -1873,7 +1875,7 @@ function Schedule({ entries }) {
 
       {/* 摘要列：不捲動就知道全局 */}
       {/* sticky：手機捲到中段仍看得到全局，不必捲回頂部確認 */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 20, marginTop: 14, background: C.ink, padding: '11px 14px' }}>
+      <div style={{ position: 'sticky', top: 'env(safe-area-inset-top)', zIndex: 20, marginTop: 14, background: C.ink, padding: '11px 14px' }}>
         <div className="flex items-baseline flex-wrap" style={{ gap: 14 }}>
           <span style={{ fontFamily: SANS, fontSize: 13.5, fontWeight: 700, color: '#fff' }}>
             滅火 {fireStores.length} 家
@@ -2571,7 +2573,7 @@ function EntryScreen({ entries, onSave, grps }) {
               <span style={{ fontFamily: SANS, fontSize: 12, color: C.ink3, width: 30 }}>{lbl}</span>
               {hs.map((h) => (
                 <button key={h} onClick={() => setHour(hour === h ? null : h)}
-                  style={{ fontFamily: MONO, fontSize: 13, padding: '6px 10px', minWidth: 38,
+                  style={{ fontFamily: MONO, fontSize: 13, padding: '6px 10px', minWidth: 44,
                     border: `1px solid ${hour === h ? C.ink : C.rule}`,
                     background: hour === h ? C.ink : C.surf, color: hour === h ? '#fff' : C.ink2 }}>
                   {h > 12 ? h - 12 : h}
@@ -2734,6 +2736,12 @@ export default function App() {
 
 function Main({ ds, setDs }) {
   const [tab, setTab] = useState('entry');
+  const [showTop, setShowTop] = useState(false);
+  useEffect(() => {
+    const f = () => setShowTop(window.scrollY > 600);
+    window.addEventListener('scroll', f, { passive: true }); f();
+    return () => window.removeEventListener('scroll', f);
+  }, []);
   const [sel, setSel] = useState(null);
   const [logGrp, setLogGrp] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -2812,25 +2820,44 @@ function Main({ ds, setDs }) {
         * { -webkit-tap-highlight-color: transparent; }
         button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid ${C.teal}; outline-offset: 1px; }
         textarea, input { border-radius: 0; }
+        /* iPhone：輸入框低於 16px 時 iOS 聚焦會整頁放大，一律 16px（只動輸入框，其餘字級不變） */
+        input, select, textarea { font-size: 16px !important; }
+        /* 觸控目標 ≥ 44pt（Apple HIG）。只加最小尺寸，不動文字與排版順序 */
+        button { min-height: 44px; min-width: 44px; }
+        select, input:not([type]), input[type=date], input[type=number], input[type=text] { min-height: 44px; }
+        /* 狀態列（black-translucent）後方補深色底，捲動內容不會穿過時間與動態島 */
+        .ip-statusbar { position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: ${C.ink}; z-index: 40; }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }`}</style>
+      <div className="ip-statusbar" aria-hidden="true" />
+      {showTop && (
+        <button aria-label="回頂端" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          style={{ position: 'fixed', right: 16, bottom: 'calc(72px + env(safe-area-inset-bottom))', zIndex: 35,
+            width: 48, height: 48, borderRadius: 24, background: C.ink, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 3px 12px rgba(14,26,32,0.25)', opacity: 0.92 }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4 L3.5 11 M10 4 L16.5 11 M10 4 V17" stroke="currentColor" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+      )}
 
-      <div style={{ maxWidth: 780, margin: '0 auto', background: C.bg, minHeight: '100vh' }}>
+      <div style={{ maxWidth: 780, margin: '0 auto', background: C.bg, minHeight: '100vh',
+        paddingBottom: 'calc(80px + env(safe-area-inset-bottom))' }}>
         <header className="px-4 py-3" style={{ background: C.ink, color: '#fff' }}>
           <div className="flex items-baseline justify-between">
             <div>
               <div style={{ fontFamily: SANS, fontSize: 15, fontWeight: 900, letterSpacing: '0.02em' }}>獨立藥局 拜訪作戰台</div>
-              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8FA8B2', marginTop: 2, letterSpacing: '0.08em' }}>v{APP_VERSION} · SOP v3.9 · 分析 {DATASET} · schema v{SCHEMA}</div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: '#8FA8B2', marginTop: 2, letterSpacing: '0.08em' }}>v{APP_VERSION} · SOP v{SOP_VER} · 分析 {DATASET} · schema v{SCHEMA}</div>
             </div>
           </div>
         </header>
 
-        <nav className="flex" style={{ background: C.surf, borderBottom: `1px solid ${C.rule}`, position: 'sticky', top: 0, zIndex: 10 }}>
+        {/* 單手操作：分頁列固定在底部，避開 Home 指示條安全區（2026/10/18） */}
+        <nav className="flex" style={{ background: C.surf, borderTop: `1px solid ${C.rule}`, position: 'fixed', left: 0, right: 0, bottom: 0,
+          maxWidth: 780, margin: '0 auto', zIndex: 30, paddingBottom: 'env(safe-area-inset-bottom)', boxShadow: '0 -2px 10px rgba(14,26,32,0.08)' }}>
           {NAV.map(([k, t]) => (
             <button key={k} onClick={() => { setTab(k); setSel(null); setLogGrp(null); setEditing(null); }}
               style={{
-                flex: 1, padding: '11px 4px', fontFamily: SANS, fontSize: 13.5,
+                flex: 1, minHeight: 56, padding: '8px 4px', fontFamily: SANS, fontSize: 13.5,
                 fontWeight: tab === k ? 900 : 500, color: tab === k ? C.ink : C.ink3,
-                borderBottom: `2px solid ${tab === k ? C.ink : 'transparent'}`, background: 'none',
+                borderTop: `3px solid ${tab === k ? C.ink : 'transparent'}`, background: 'none',
               }}>{t}</button>
           ))}
         </nav>
