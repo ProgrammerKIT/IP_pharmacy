@@ -14,6 +14,7 @@ import pandas as pd, numpy as np
 # ─────────────────────────────────────────────────────────────
 # 口徑規則（對應 SOP 裁定，改這裡之前先改 SOP）
 # ─────────────────────────────────────────────────────────────
+ORDER_WINDOW_DAYS = 365   # 斷單判定之訂單歷史視窗（裁定 27：近 365 天，不以年度切）
 CUTOFF_PERIOD = 9          # 官方 YoY 比較期間：兩年皆 1–9 月（裁定 1、23 滾動；2026/10/17 9 月資料到位）
 
 DROP_MATERIALS = [         # 完全剔除，不進任何計算（裁定 3）
@@ -117,6 +118,10 @@ def build(df):
     a = df[(df.Year == prev) & (df.Period <= CUTOFF_PERIOD)]     # 去年同期
     b = df[(df.Year == curr) & (df.Period <= CUTOFF_PERIOD)]     # 今年
     y_prev_full = df[df.Year == prev]                            # 去年全年（同日累計基準用）
+    # 節奏用訂單視窗：官方資料最新日往回 365 天，跨年不歸零（2026/11/06 Kit 裁定，SOP 裁定 27）
+    data_end = b.D.max()
+    win = pd.concat([y_prev_full, b])
+    win = win[win.D > data_end - pd.Timedelta(days=ORDER_WINDOW_DAYS)]
 
     out = {}
     for g in sorted(df.Grp.unique()):
@@ -133,9 +138,9 @@ def build(df):
                               e25=int(ia.EA.sum()), e26=int(ib.EA.sum()),
                               st=item_status(ia.Sales.sum(), ib.Sales.sum())))
 
-        # 2026 逐筆訂單（節奏計算用，前端會再併入補登）
+        # 近 365 天逐筆訂單（節奏計算用，含去年底；前端依當日再取近 365 天，並併入補登）
         orders = {}
-        for it, s in gb.groupby('Item'):
+        for it, s in win[win.Grp == g].groupby('Item'):
             # [日期, 付費EA, 贈品EA]。節奏用總量(付費+贈品)，顯示時才拆開。
             # 舊格式為 [日期, 總EA] 兩欄，前端相容處理。
             agg = s.assign(paid=s.EA.where(s.Sales != 0, 0), gift=s.EA.where(s.Sales == 0, 0)) \

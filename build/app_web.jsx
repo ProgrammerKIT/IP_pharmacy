@@ -123,8 +123,8 @@ let CUTOFF = '';   // 官方 Offtake 資料截止日，由資料檔帶入。補�
 let UNIT = {};   // 單價屬客戶／商業資料，由資料檔帶入，仍為鎖定不可手動更改
 const UNIT_TAX = { 'Ultra MD': 178, 'X3': 483, 'Ultra UD': 295, 'HAUD': 450, 'HAMD': 350, 'C': 250, 'TN': 100, 'TNF': 350, 'DT': 61.57 };
 const SCHEMA = 3;
-const APP_VERSION = '2.12.0';
-const SOP_VER = '3.17';   // 標題列顯示之 SOP 版號；SOP 升版時同步更新
+const APP_VERSION = '2.13.0';
+const SOP_VER = '3.18';   // 標題列顯示之 SOP 版號；SOP 升版時同步更新
 const BUILD = '2026-08-15';
 const BUILD_AT = '__BUILD_AT__';   // 建置當下的台北時間，由打包程序注入
 /* 每次交付都遞增 APP_VERSION，資料頁看得到，你才分得出手上是哪一版 */
@@ -132,6 +132,7 @@ const CHANGELOG = [
   ['1.17.0', '2026-08-20', '匯入改為依時間戳自動判斷新舊（取消手動勾選覆蓋）；新增雙邊分歧警告；備份逾期 14 天提醒'],
   ['1.16.1', '2026-08-20', '修正：版本偵測只在載入時執行一次，iOS 桌面 App 從背景恢復時不會檢查；改為每次回到前景都重新檢查'],
   ['1.16.0', '2026-08-20', '接單補登新增「下單時間」（上午／下午＋整點，選填）；客戶卡新增下單時間習慣分析，滿 5 筆才給結論'],
+  ['2.13.0', '2026-11-06', '斷單判定改看近 365 天訂單，跨年不再歸零（SOP 裁定 27）：年底才斷的線、1–3 月斷的線都會示警。新增「低頻線」：平均 100 天以上才訂一次的線不做倍數判定，改列末單日與已過天數，歸在排程頁「樣本不足／低頻線」區'],
   ['2.12.0', '2026-10-18', 'iPhone 操作與版面：分頁列移到底部（單手好按，避開 Home 指示條）；狀態列後方補深色底，捲動內容不再穿過動態島；輸入框一律 16px，點下去不再整頁放大；所有按鈕觸控範圍至少 44pt，返回鍵加大；長頁面捲過一段後出現回頂端按鈕；標題列 SOP 版號更正為 v3.17。數字、文字與資料處理均未變動'],
   ['2.11.1', '2026-10-17', '修正：曾列入優先序、有手寫劇本的客戶一旦移出優先序，會從「拜訪前」頁整個消失（含禁區）。改為移出優先序者列在「其餘」區、保留手寫劇本與禁區並標「劇本」；「其餘 N 家」改為依實際筆數顯示'],
   ['2.11.0', '2026-10-17', '口徑推進為 1–9 月（SOP v3.17 裁定 23 滾動）；體系內部拆解的期間標籤改由資料檔月數自動帶出，不再寫死；資料截止日 2026-09-29，補登 ≤ 此日者自動歸檔'],
@@ -330,9 +331,13 @@ const TODAY_STR = () => new Date(Date.now() + 8 * 3600000).toISOString().slice(0
 function cadence(grp, item, entries) {
   /* orders 新格式 [日期, 付費EA, 贈品EA]；舊格式 [日期, 總EA] 仍相容（贈品視為 0）。
      節奏一律用總量計算，付費／贈品只在顯示時拆開。 */
+  /* 訂單歷史視窗：近 365 天，跨年不歸零（SOP 裁定 27，2026/11/06）。
+     原本只看當年：年底才斷的線與每年 1–3 月斷的線都不會示警，回測 44 件斷線只抓到 20 件；改後 35 件。 */
+  const winFrom = new Date(new Date(TODAY_STR()).getTime() - ORDER_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
   const base = (((DATA[grp] || {}).orders || {})[item] || [])
-    .map((r) => (r.length >= 3 ? [r[0], Number(r[1]) || 0, Number(r[2]) || 0] : [r[0], Number(r[1]) || 0, 0]));
-  const extra = liveEntries(entries).filter((e) => e.grp === grp && e.item === item)
+    .map((r) => (r.length >= 3 ? [r[0], Number(r[1]) || 0, Number(r[2]) || 0] : [r[0], Number(r[1]) || 0, 0]))
+    .filter((r) => r[0] > winFrom);
+  const extra = liveEntries(entries).filter((e) => e.grp === grp && e.item === item && e.date > winFrom)
     .map((e) => [e.date, Number(e.paidEA) || 0, Number(e.giftEA) || 0]);
   const byDate = {};
   [...base, ...extra].forEach(([d, p, g]) => {
@@ -358,7 +363,13 @@ function cadence(grp, item, entries) {
   const shift = (d, days) => new Date(new Date(d).getTime() + days * 86400000).toISOString().slice(0, 10);
   const diff = dep - avgInt;
   let ok = true, why = '';
+  const gapNow = Math.round((new Date(TODAY_STR()) - new Date(last)) / 86400000);
   if (b.length <= 2) { ok = false; why = '僅 2 筆訂單，平均間隔樣本數為 1'; }
+  else if (avgInt >= LOW_FREQ_DAYS) {
+    /* 低頻線（SOP 裁定 27）：一年只訂 3–4 次的線，倍數規則要等 150 天以上才達標，等於失效。
+       不給倍數與建議日，只列末單日與已過天數，由現場判斷。 */
+    ok = false; why = `低頻線（平均 ${avgInt.toFixed(0)} 天一單）：末單 ${last}，已過 ${gapNow} 天`;
+  }
   else if (Math.abs(diff) > 90) { ok = false; why = `兩法差距 ${Math.abs(diff).toFixed(0)} 天，流速估計不穩`; }
   return {
     item, n: b.length, ok, why, last, added, lastPaid, lastGift,
@@ -407,6 +418,8 @@ function askWhat(c, isNew) {
 
 const WARN_RATIO = 1.5;
 const WARN_PAST_DAYS = 21;
+const ORDER_WINDOW_DAYS = 365;   // 裁定 27：節奏只看近 365 天訂單
+const LOW_FREQ_DAYS = 100;       // 裁定 27：平均間隔 ≥ 此天數為低頻線，不做倍數判定
 const isStockout = (c, gapDays) => {
   if (!c.avg_int) return false;
   return (gapDays / c.avg_int) >= WARN_RATIO && (gapDays - c.avg_int) >= WARN_PAST_DAYS;
@@ -2084,7 +2097,7 @@ function Schedule({ entries }) {
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <SecHead n="5" t={`樣本不足 ${weak.length} 條 · 不給日期`} />
+        <SecHead n="5" t={`樣本不足／低頻線 ${weak.length} 條 · 不給日期`} />
         <div style={{ background: C.surf, border: `1px solid ${C.hair}` }}>
           {weak.map((r, i) => (
             <div key={i} className="flex items-baseline flex-wrap px-3 py-2" style={{ borderBottom: `1px solid ${C.hair}`, gap: 8 }}>

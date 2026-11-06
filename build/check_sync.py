@@ -81,6 +81,16 @@ def main():
     chk('斷單門檻 超過見底天數', m.group(1) if m else None,
         re.search(r'const WARN_PAST_DAYS = (\d+);', app).group(1))
 
+    # ⑥-2 歷史視窗與低頻線（裁定 27）
+    m = re.search(r'判定當日往回 (\d+) 天', sop.replace('**', ''))
+    chk('節奏歷史視窗（App）', m.group(1) if m else None,
+        re.search(r'const ORDER_WINDOW_DAYS = (\d+);', app).group(1))
+    chk('節奏歷史視窗（pipeline）', m.group(1) if m else None,
+        re.search(r'ORDER_WINDOW_DAYS = (\d+)', pl).group(1))
+    m = re.search(r'平均訂貨間隔 ≥ ?(\d+) 天之線', sop.replace('**', ''))
+    chk('低頻線門檻', m.group(1) if m else None,
+        re.search(r'const LOW_FREQ_DAYS = (\d+);', app).group(1))
+
     # ⑦ 單價鎖定（裁定 18）
     sop_units = dict(re.findall(r'(Ultra MD|X3|Ultra UD|HAUD|HAMD|C|TN|TNF|DT) ([\d.]+)／[\d.]+', sop))
     app_units = dict(re.findall(r"'([\w ]+)': ([\d.]+)", re.search(r'unit: \{(.*?)\}', load('play_src.js'), re.S).group(1))) \
