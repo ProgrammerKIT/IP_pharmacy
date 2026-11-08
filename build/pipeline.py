@@ -15,7 +15,7 @@ import pandas as pd, numpy as np
 # 口徑規則（對應 SOP 裁定，改這裡之前先改 SOP）
 # ─────────────────────────────────────────────────────────────
 ORDER_WINDOW_DAYS = 365   # 斷單判定之訂單歷史視窗（裁定 27：近 365 天，不以年度切）
-CUTOFF_PERIOD = 9          # 官方 YoY 比較期間：兩年皆 1–9 月（裁定 1、23 滾動；2026/10/17 9 月資料到位）
+CUTOFF_PERIOD = 10         # 官方 YoY 比較期間：兩年皆 1–10 月（裁定 1、23 滾動；2026/11/08 10 月資料到位）
 
 DROP_MATERIALS = [         # 完全剔除，不進任何計算（裁定 3）
     'SYSTANE HA UD 5X0.7ML 2',
@@ -53,7 +53,8 @@ TIER_BANDS = [(0.10, '成長'), (-0.10, '平穩'), (-0.30, '衰退')]   # 其餘
 
 
 def tier_of(a, b):
-    if a == 0 and b > 0: return '新客'
+    # 舊年淨額 ≤0（無實質往來或僅沖銷）且新年 >0 → 新客，不計成長率（2026/11/08 Kit 同意，SOP 第一步）
+    if a <= 0 and b > 0: return '新客'
     if a > 0 and b == 0: return '流失'
     if a == 0: return '-'
     r = b / a - 1
@@ -115,8 +116,11 @@ def load(path):
 def build(df):
     years = sorted(df.Year.unique())
     prev, curr = years[0], years[-1]
-    a = df[(df.Year == prev) & (df.Period <= CUTOFF_PERIOD)]     # 去年同期
     b = df[(df.Year == curr) & (df.Period <= CUTOFF_PERIOD)]     # 今年
+    # 官方口徑＝同日累計：去年取至「今年資料最後一日」之同月同日（2026/11/08 Kit 裁定，SOP 裁定 23）
+    curr_end = b.D.max()
+    prev_cut = pd.Timestamp(year=int(prev), month=curr_end.month, day=curr_end.day)
+    a = df[(df.Year == prev) & (df.Period <= CUTOFF_PERIOD) & (df.D <= prev_cut)]   # 去年同期（同日）
     y_prev_full = df[df.Year == prev]                            # 去年全年（同日累計基準用）
     # 節奏用訂單視窗：官方資料最新日往回 365 天，跨年不歸零（2026/11/06 Kit 裁定，SOP 裁定 27）
     data_end = b.D.max()
@@ -172,7 +176,7 @@ def build(df):
 
         out[g] = dict(
             grp=g, s25=int(s25), s26=int(s26), diff=int(s26 - s25),
-            gr=round(s26 / s25 - 1, 4) if s25 else None, tier=tier_of(s25, s26),
+            gr=round(s26 / s25 - 1, 4) if s25 > 0 else None, tier=tier_of(s25, s26),
             p1sh25=round(p1a / s25, 4) if s25 else None, p1sh26=round(p1b / s26, 4) if s26 else None,
             p1_25=int(p1a), p1_26=int(p1b),
             gift25=round(float(ga.Gift.sum()) / ea_a, 4) if ea_a else None,
@@ -200,8 +204,8 @@ def build(df):
             raise SystemExit(f"❌ {g}：品項 2026 加總 ≠ 群組 s26")
         if abs(sum(d['m25']) - d['s25']) > 1:
             raise SystemExit(f"❌ {g}：月別 2025 加總 ≠ 群組 s25")
-        if abs(sum(v for dt, v in d['d25'] if dt <= f'{CUTOFF_PERIOD:02d}-31') - d['s25']) > 1:
-            raise SystemExit(f"❌ {g}：日累計至 {CUTOFF_PERIOD} 月底 ≠ 群組 s25")
+        if abs(sum(v for dt, v in d['d25'] if dt <= prev_cut.strftime('%m-%d')) - d['s25']) > 1:
+            raise SystemExit(f"❌ {g}：日累計至 {prev_cut.strftime('%m-%d')} ≠ 群組 s25")
 
     ch_daily = y_prev_full.groupby('D')['Sales'].sum().sort_index()
     out['__CH__'] = dict(
@@ -223,6 +227,8 @@ def fingerprint(path, audit, data, a, b, prev, curr):
         'source_md5': hashlib.md5(src).hexdigest(),
         'source_bytes': len(src),
         'compare_period': f'1-{CUTOFF_PERIOD} 月',
+        'compare_cut': {'prev': str(b.D.max().replace(year=int(prev)).date()), 'curr_end': str(b.D.max().date()),
+                        'rule': '同日累計（去年取至今年資料最後一日之同月同日）'},
         'years': [int(prev), int(curr)],
         'reconciliation': audit,
         'totals': {
