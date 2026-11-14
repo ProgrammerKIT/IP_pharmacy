@@ -16,3 +16,7 @@ build_src.jsx
 bundle.js
 node_modules/
 package*.json
+
+# 假設帳與版本清單：含客戶名稱與金額 → 只留在 Claude Project build_data/
+scenario.json
+manifest.json

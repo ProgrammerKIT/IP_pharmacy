@@ -103,6 +103,33 @@ def main():
     else:
         skipped.append('單價鎖定表')
 
+    # ⑧ 版本清單（manifest.json，SOP 裁定 30 同期建立）：版號、資料指紋、過時字句
+    mf_path = os.environ.get('MANIFEST_FILE', 'manifest.json')
+    if os.path.exists(mf_path):
+        mf = json.load(open(mf_path, encoding='utf-8'))
+        m = re.search(r'版本：(v[\d.]+)（', sop)
+        chk('SOP 檔頭版號 vs manifest', mf['sop']['version'], m.group(1) if m else '（檔頭找不到版號）')
+        chk('App APP_VERSION vs manifest', mf['app']['version'],
+            re.search(r"const APP_VERSION = '([\d.]+)'", app).group(1))
+        chk('App 標題列 SOP_VER vs manifest', mf['app']['sop_label'],
+            re.search(r"const SOP_VER = '([\d.]+)'", app).group(1))
+        chk('CUTOFF_PERIOD vs manifest', mf['pipeline']['cutoff_period'],
+            re.search(r'CUTOFF_PERIOD = (\d+)', pl).group(1))
+        if os.path.exists('baseline.json'):
+            bl = json.load(open('baseline.json', encoding='utf-8'))
+            chk('資料檔指紋（source_md5）vs manifest', mf['data']['source_md5'], bl.get('source_md5'))
+            chk('資料截止日 vs manifest', mf['data']['data_cutoff'], (bl.get('compare_cut') or {}).get('curr_end'))
+        else:
+            skipped.append('資料檔指紋（無 baseline.json）')
+        for ph in mf.get('stale_phrases', []):
+            if ph in sop:
+                bad.append(f'SOP 仍含過時字句「{ph}」')
+        # App 標題列 SOP 版號與 SOP 本身不同：只提示、不擋（App 未必隨每次 SOP 升版重新部署）
+        if mf['app']['sop_label'] != mf['sop']['version'].lstrip('v'):
+            print(f"   ⚠ 提示：App 標題列 SOP 版號 {mf['app']['sop_label']} ≠ SOP {mf['sop']['version']}（manifest 已登錄，非錯誤）")
+    else:
+        skipped.append('版本清單（無 manifest.json）')
+
     print(f'口徑同步檢查｜SOP：{sop_path}')
     for x in ok:
         print(f'   ✓ {x}')
